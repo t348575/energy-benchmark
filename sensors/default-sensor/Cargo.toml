@@ -1,0 +1,25 @@
+[package]
+name = "default-sensor"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies.serde_json]
+workspace = true
+
+[dependencies.common]
+workspace = true
+
+[dependencies.macros]
+path = "../../macros"
+
+[dependencies.powersensor_3]
+path = "../powersensor_3"
+
+[dependencies.pmt]
+path = "../pmt"
+
+[dependencies.netio-http]
+path = "../netio-http"
+
+[dependencies.sysinfo]
+path = "../sysinfo"

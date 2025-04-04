@@ -1,0 +1,14 @@
+[package]
+name = "macros"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+convert_case = "0.8"
+proc-macro2 = "1.0"
+quote = "1.0"
+serde.workspace = true
+toml = "0.8"
+
+[lib]
+proc-macro = true

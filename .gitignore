@@ -1,0 +1,16 @@
+build
+.vscode
+.venv
+*.log
+*.png
+
+# Added by cargo
+
+/target
+.energy-benchmark
+__pycache__
+.cargo
+build-prun
+include
+lib
+results

@@ -1,0 +1,18 @@
+[package]
+name = "powersensor_3"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+cxx.workspace = true
+thiserror.workspace = true
+common.workspace = true
+serde.workspace = true
+typetag.workspace = true
+eyre.workspace = true
+flume.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[build-dependencies]
+cxx-build.workspace = true
