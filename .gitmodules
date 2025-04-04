@@ -1,0 +1,3 @@
+[submodule "sensors/pmt/pmt"]
+	path = sensors/pmt/pmt
+	url = https://git.astron.nl/RD/pmt.git
