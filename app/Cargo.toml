@@ -17,5 +17,9 @@ tracing-subscriber = { version = "0.3", features = ["chrono", "env-filter"] }
 common.workspace = true
 flume.workspace = true
 macros = { path = "../macros" }
-default-bench = { path = "../benches/default-bench" }
-default-sensor = { path = "../sensors/default-sensor" }
+default-sensors = { path = "../sensors/default-sensors" }
+default-plots = { path = "../plots/default-plots" }
+default-benches = { path = "../benches/default-benches" }
+setup = { path = "../" }
+indicatif = "0.17"
+console = "0.15"

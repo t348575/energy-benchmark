@@ -7,12 +7,13 @@ use serde::Deserialize;
 struct BuildConfig {
     benches: Vec<String>,
     sensors: Vec<String>,
+    plots: Vec<String>,
 }
 
 #[proc_macro]
 pub fn include_benches(_: TokenStream) -> TokenStream {
     let config: BuildConfig =
-        toml::from_str(&std::fs::read_to_string("build.config.toml").unwrap()).unwrap();
+        toml::from_str(&std::fs::read_to_string("setup.toml").unwrap()).unwrap();
     let mut benches = Vec::new();
     let mut benches_caps = Vec::new();
 
@@ -37,7 +38,7 @@ pub fn include_benches(_: TokenStream) -> TokenStream {
 #[proc_macro]
 pub fn include_sensors(_: TokenStream) -> TokenStream {
     let config: BuildConfig =
-        toml::from_str(&std::fs::read_to_string("build.config.toml").unwrap()).unwrap();
+        toml::from_str(&std::fs::read_to_string("setup.toml").unwrap()).unwrap();
     let mut sensors = Vec::new();
     let mut sensors_caps = Vec::new();
 
@@ -50,10 +51,10 @@ pub fn include_sensors(_: TokenStream) -> TokenStream {
     }
 
     quote! {
-        pub static SENSORS: std::sync::OnceLock<std::sync::Mutex<Vec<Box<dyn common::sensor::Sensor>>>> = std::sync::OnceLock::new();
+        pub static SENSORS: std::sync::OnceLock<tokio::sync::Mutex<Vec<Box<dyn common::sensor::Sensor>>>> = std::sync::OnceLock::new();
 
         pub fn init_sensors() {
-            SENSORS.set(std::sync::Mutex::new(vec![#(Box::new(#sensors::#sensors_caps::default()),)*])).unwrap();
+            SENSORS.set(tokio::sync::Mutex::new(vec![#(Box::new(#sensors::#sensors_caps::default()),)*])).unwrap();
             #(
                 serde_json::to_string(&#sensors::#sensors_caps::default()).unwrap();
             )*
@@ -63,9 +64,34 @@ pub fn include_sensors(_: TokenStream) -> TokenStream {
 }
 
 #[proc_macro]
+pub fn include_plots(_: TokenStream) -> TokenStream {
+    let config: BuildConfig =
+        toml::from_str(&std::fs::read_to_string("setup.toml").unwrap()).unwrap();
+    let mut plots = Vec::new();
+    let mut plots_caps = Vec::new();
+
+    for p in config.plots {
+        let p_name_caps = format_ident!("{}", p.to_case(Case::Pascal));
+        let p_name = format_ident!("{}", p.to_case(Case::Snake));
+
+        plots.push(p_name);
+        plots_caps.push(p_name_caps);
+    }
+
+    quote! {
+        pub fn init_plots() {
+            #(
+                serde_json::to_string(&#plots::#plots_caps::default()).unwrap();
+            )*
+        }
+    }
+    .into()
+}
+
+#[proc_macro]
 pub fn plugin_names_str(_: TokenStream) -> TokenStream {
     let config: BuildConfig =
-        toml::from_str(&std::fs::read_to_string("build.config.toml").unwrap()).unwrap();
+        toml::from_str(&std::fs::read_to_string("setup.toml").unwrap()).unwrap();
 
     let mut names = config
         .benches
@@ -73,9 +99,10 @@ pub fn plugin_names_str(_: TokenStream) -> TokenStream {
         .map(|x| x.to_case(Case::Snake))
         .collect::<Vec<_>>();
     names.extend(config.sensors.iter().map(|x| x.to_case(Case::Snake)));
+    names.extend(config.plots.iter().map(|x| x.to_case(Case::Snake)));
 
     quote! {
-        [#(#names),*]
+        &[#(#names),*]
     }
     .into()
 }

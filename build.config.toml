@@ -1,2 +1,0 @@
-benches = ["fio"]
-sensors = ["powersensor_3", "pmt", "netio-http", "sysinfo"]

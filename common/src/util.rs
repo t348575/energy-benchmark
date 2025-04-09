@@ -1,10 +1,10 @@
 use std::{collections::HashSet, hash::Hash, path::PathBuf};
 
-use eyre::{Context, Result, bail};
+use eyre::{Context, ContextCompat, Result, bail};
 use flume::{Receiver, Sender};
 use pyo3::{
     Bound, PyAny, PyResult, Python,
-    types::{PyAnyMethods, PyDict, PyListMethods, PyModule},
+    types::{PyAnyMethods, PyListMethods},
 };
 use tokio::{fs::File, io::AsyncWriteExt, task::spawn_blocking};
 use tracing::{debug, error, warn};
@@ -29,7 +29,7 @@ pub fn find_outliers_by_stddev(data: &[f64], allowed_deviation: f64) -> Vec<usiz
 }
 
 pub fn combine_and_remove_duplicates<T: Eq + Hash>(vec1: Vec<T>, vec2: Vec<T>) -> Vec<T> {
-    let set: HashSet<T> = vec1.into_iter().chain(vec2.into_iter()).collect();
+    let set: HashSet<T> = vec1.into_iter().chain(vec2).collect();
     set.into_iter().collect()
 }
 
@@ -64,25 +64,25 @@ pub fn parse_request_size(request_size: &str) -> Result<u64> {
 }
 
 /// Utility function to perform sensor recordings in a conventional manner
-pub async fn simple_sensor_reader<A, S, F, Fut, T>(
+pub async fn simple_sensor_reader<Args, Sensor, ReadSensorData, Fut, SensorData>(
     rx: Receiver<SensorRequest>,
     tx: Sender<SensorReply>,
     filename: &str,
-    args: A,
-    init: fn(&A) -> Result<(S, Vec<String>)>,
-    read: F,
+    args: Args,
+    init: fn(&Args) -> Result<(Sensor, Vec<String>)>,
+    read: ReadSensorData,
 ) -> Result<()>
 where
-    A: SensorArgs + Clone,
-    T: IntoIterator,
-    T::Item: ToString,
-    S: Clone + Send + 'static,
-    F: Fn(&A, &S, &SensorRequest) -> Fut,
-    Fut: Future<Output = Result<T>>,
+    Args: SensorArgs + Clone,
+    SensorData: IntoIterator,
+    SensorData::Item: ToString,
+    Sensor: Clone + Send + 'static,
+    ReadSensorData: Fn(&Args, &Sensor, &SensorRequest) -> Fut,
+    Fut: Future<Output = Result<SensorData>>,
 {
     let args_copy = args.clone();
     let (s, sensor_names) = spawn_blocking(move || init(&args_copy)).await??;
-    debug!("Starting {} reader", args.name());
+    debug!("Spawning {} reader", args.name());
 
     let mut readings = Vec::new();
     let mut is_running = false;
@@ -94,17 +94,18 @@ where
                 match request {
                     SensorRequest::StartRecording {
                         dir: _dir,
-                        args,
+                        args: bench_args,
                         program,
                         pid,
                         bench,
                     } => {
+                        debug!("Starting {} reader", args.name());
                         is_running = true;
                         dir = _dir.clone();
 
                         req = SensorRequest::StartRecording {
                             dir: _dir,
-                            args,
+                            args: bench_args,
                             program,
                             pid,
                             bench,
@@ -120,20 +121,25 @@ where
         } else {
             match read(&args, &s, &req).await {
                 Ok(t) => readings.push(t),
-                Err(err) => error!("Error collecting sensor data for {} {:#?}", args.name(), err),
+                Err(err) => error!(
+                    "Error collecting sensor data for {} {:#?}",
+                    args.name(),
+                    err
+                ),
             }
 
             if !rx.is_empty() {
                 if let Ok(request) = rx.recv_async().await {
                     if let SensorRequest::StopRecording = request {
+                        debug!("Stopping {} reader", args.name());
                         is_running = false;
                         let filename = dir.join(format!("{filename}.csv"));
                         let mut file = File::create(filename).await?;
 
-                        file.write(format!("{}\n", sensor_names.join(",")).as_bytes())
+                        file.write_all(format!("{}\n", sensor_names.join(",")).as_bytes())
                             .await?;
                         for row in readings.drain(..) {
-                            file.write(
+                            file.write_all(
                                 format!(
                                     "{}\n",
                                     row.into_iter()
@@ -161,27 +167,15 @@ where
     Ok(())
 }
 
-pub fn plot_python<Func>(
-    func: Func,
-    bench: fn(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()>,
-    module_name: &str,
-    plotting_file: &str,
-) -> Result<()>
+pub fn plot_python<Func>(func: Func, plotting_file: &str) -> Result<()>
 where
     Func: FnOnce(Python<'_>, Bound<'_, PyAny>) -> PyResult<()>,
 {
     let result: PyResult<()> = Python::with_gil(|py| {
-        let module = PyModule::new(py, module_name)?;
-        bench(py, &module)?;
-        py.import("sys")?
-            .getattr("modules")?
-            .downcast::<PyDict>()?
-            .set_item(module_name, module)?;
-
         let sys = py.import("sys")?;
         let path = sys.getattr("path")?;
         let path: &Bound<_> = path.downcast()?;
-        path.insert(0, "plotting")?;
+        path.insert(0, "plots")?;
 
         let user_module = py.import(plotting_file)?;
 
@@ -189,4 +183,50 @@ where
     });
     result?;
     Ok(())
+}
+
+pub fn get_mean_power(data: &str, column: &str) -> Result<f64> {
+    let mut lines = data.lines();
+    let header = lines.next().context("Missing header")?;
+    let headers: Vec<&str> = header.split(',').collect();
+    let selected_column = headers
+        .iter()
+        .position(|h| *h == column)
+        .context(format!("Missing column {column}"))?;
+
+    let total_column = headers
+        .iter()
+        .position(|h| *h == "Total")
+        .context("Missing column Total")?;
+
+    let data_lines = lines.skip(100);
+
+    let mut total_sum = 0.0;
+    let mut count = 0;
+
+    for line in data_lines {
+        let cols: Vec<&str> = line.split(',').collect();
+        if let Some(value_str) = cols.get(total_column) {
+            if let Ok(value) = value_str.trim().parse::<f64>() {
+                if value.is_infinite() || value.is_nan() || value <= 0.0 || value > 300.0 {
+                    continue;
+                }
+            }
+        }
+
+        if let Some(value_str) = cols.get(selected_column) {
+            if let Ok(value) = value_str.trim().parse::<f64>() {
+                if value.is_finite() {
+                    total_sum += value;
+                    count += 1;
+                }
+            }
+        }
+    }
+
+    if count == 0 {
+        bail!("No valid data points found")
+    } else {
+        Ok(total_sum / count as f64)
+    }
 }

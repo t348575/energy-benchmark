@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     bench::{Bench, BenchArgs},
+    plot::Plot,
     sensor::SensorArgs,
 };
 
@@ -35,4 +36,5 @@ pub struct InnerBench {
     pub name: String,
     pub repeat: usize,
     pub bench: Box<dyn Bench>,
+    pub plots: Option<Vec<Box<dyn Plot>>>,
 }

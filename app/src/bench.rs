@@ -1,31 +1,61 @@
-use std::{collections::HashMap, path::PathBuf, time::Duration};
+use std::{
+    collections::HashMap,
+    path::PathBuf,
+    process::Stdio,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use chrono::Local;
 use common::{
     bench::{Bench, BenchArgs, BenchmarkInfo, Cmd},
     config::Config,
+    plot::{PlotType, plot},
     sensor::{Sensor, SensorArgs, SensorRequest},
     util::remove_indices,
 };
+use console::style;
 use eyre::{Context, Result, bail};
 use flume::unbounded;
+use indicatif::{ProgressBar, ProgressStyle};
 use tokio::{
     fs::{copy, create_dir_all, read_to_string, remove_dir_all},
     process::Command,
+    spawn,
+    sync::Mutex,
     time::sleep,
 };
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 
 pub async fn run_benchmark(config_file: String) -> Result<()> {
     let config: Config = serde_yml::from_str(&read_to_string(&config_file).await?)?;
 
-    let sensor_objects = default_sensor::SENSORS.get().unwrap().lock().unwrap();
+    let total_units = calculate_total_units(&config);
+    let pb = ProgressBar::new(total_units);
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template("{wide_bar} {pos}/{len} | ETA: {msg}")
+            .unwrap(),
+    );
+    let tracker = Arc::new(Mutex::new(TimingTracker::new(total_units)));
+    let pb_c = pb.clone();
+    let t_c = tracker.clone();
+    spawn(async move {
+        while !pb_c.is_finished() {
+            {
+                pb_c.set_message(t_c.lock().await.eta());
+            }
+            sleep(Duration::from_millis(1000)).await;
+        }
+    });
+
+    let sensor_objects = default_sensors::SENSORS.get().unwrap().lock().await;
     let mut sensors = Vec::new();
     let mut sensor_replies = Vec::new();
     let mut loaded_sensors = Vec::new();
     let mut sensor_handles = Vec::new();
 
-    for s in config.sensors {
+    for s in &config.sensors {
         if let Some(obj) = sensor_objects.iter().find(|s_obj| s_obj.name() == s) {
             let sensor_args = get_sensor_args(&config.sensor_args, obj.as_ref())?;
             let (req_tx, req_rx) = unbounded();
@@ -36,6 +66,7 @@ pub async fn run_benchmark(config_file: String) -> Result<()> {
             loaded_sensors.push(s);
         }
     }
+    drop(sensor_objects);
 
     debug!("Loaded sensors: {loaded_sensors:?}");
 
@@ -47,12 +78,26 @@ pub async fn run_benchmark(config_file: String) -> Result<()> {
     let results_path = PathBuf::from("results").join(format!("{}-{file_prefix}", config.name));
     let data_path = results_path.join("data");
     create_dir_all(&results_path).await?;
+    let plot_path = results_path.join("plots");
+    _ = remove_dir_all(&plot_path).await;
+    create_dir_all(&plot_path).await?;
     copy(config_file, results_path.join("config.yaml")).await?;
 
     let nvme_power_states = match &config.settings.nvme_power_states {
-        Some(ps) => ps.into_iter().map(|x| *x as i32).collect(),
+        Some(ps) => ps.iter().map(|x| *x as i32).collect(),
         None => vec![],
     };
+
+    let s = sensors.clone();
+    spawn(async move {
+        tokio::signal::ctrl_c().await.unwrap();
+        info!("Got CTRL+C signal");
+        for s in s {
+            s.send_async(SensorRequest::Quit).await.unwrap();
+        }
+
+        std::process::exit(0);
+    });
 
     let nvme_cli_device = config
         .settings
@@ -61,7 +106,12 @@ pub async fn run_benchmark(config_file: String) -> Result<()> {
         .unwrap_or(config.settings.device.clone());
 
     let mut benchmark_info = HashMap::new();
-    for experiment in config.benches {
+    let total_experiments = config.benches.len();
+    let mut current_experiment = 0;
+    let total_power_states = nvme_power_states.len();
+
+    for experiment in &config.benches {
+        current_experiment += 1;
         let mut ps = nvme_power_states.clone();
         if ps.is_empty() {
             ps.push(-1);
@@ -79,6 +129,8 @@ pub async fn run_benchmark(config_file: String) -> Result<()> {
                         "--value",
                         &power_state.to_string(),
                     ])
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
                     .spawn()
                     .context("Set nvme power state")?;
                 let status = ps_change_cmd.wait().await?;
@@ -86,7 +138,7 @@ pub async fn run_benchmark(config_file: String) -> Result<()> {
                 if !status.success() {
                     bail!("Could not change device power state to {power_state}");
                 }
-                debug!("Power state of {nvme_cli_device} change to {power_state}");
+                info!("Power state of {nvme_cli_device} change to {power_state}");
             }
 
             let bench_args = get_bench_args(&config.bench_args, &*experiment.bench)?;
@@ -95,16 +147,40 @@ pub async fn run_benchmark(config_file: String) -> Result<()> {
                     .bench
                     .cmds(&config.settings, &*bench_args, &experiment.name)?;
 
-            for Cmd {
-                args,
-                hash,
-                arg_obj,
-            } in cmds
+            let total_commands = cmds.len();
+            for (
+                current_command,
+                Cmd {
+                    args,
+                    hash,
+                    arg_obj,
+                },
+            ) in cmds.into_iter().enumerate()
             {
                 let mut i = 0;
                 let mut total_outliers = 0;
                 let mut dirs = Vec::new();
                 loop {
+                    pb.set_message(format!(
+                        "Experiment {}/{} | PS {}/{} | Cmd {}/{}: Iteration {}{}",
+                        current_experiment,
+                        total_experiments,
+                        if power_state == -1 {
+                            "N/A".to_owned()
+                        } else {
+                            power_state.to_string()
+                        },
+                        total_power_states,
+                        current_command,
+                        total_commands,
+                        i,
+                        if total_outliers > 0 {
+                            format!(" ({} retries)", total_outliers)
+                        } else {
+                            String::new()
+                        }
+                    ));
+
                     let folder_name = format!(
                         "{}-ps{}-i{}-{}",
                         experiment.name,
@@ -118,7 +194,7 @@ pub async fn run_benchmark(config_file: String) -> Result<()> {
                         folder_name,
                         BenchmarkInfo {
                             args: arg_obj.clone(),
-                            power_state: power_state,
+                            power_state,
                             iteration: i,
                             name: experiment.name.clone(),
                             hash: hash.clone(),
@@ -147,6 +223,18 @@ pub async fn run_benchmark(config_file: String) -> Result<()> {
                     for s in &sensor_replies {
                         _ = s.recv_async().await?;
                     }
+                    tracker.lock().await.increment();
+                    pb.inc(1);
+
+                    pb.set_message(format!(
+                        "Iteration {} [{} retries]",
+                        i + 1,
+                        if total_outliers > 0 {
+                            format!(" ({} retries)", total_outliers)
+                        } else {
+                            String::new()
+                        }
+                    ));
                     debug!("Done with bench {} iter={}", experiment.name, i);
 
                     i += 1;
@@ -173,6 +261,8 @@ pub async fn run_benchmark(config_file: String) -> Result<()> {
                                 benchmark_info.remove(&dirs[*item]);
                                 debug!("Removing {}", dirs[*item]);
                                 remove_dir_all(&data_path.join(&dirs[*item])).await?;
+                                tracker.lock().await.increment();
+                                pb.inc(1);
                             }
                             remove_indices(&mut dirs, &outliers);
                         }
@@ -194,17 +284,38 @@ pub async fn run_benchmark(config_file: String) -> Result<()> {
                 experiment_dirs.extend(dirs);
             }
         }
-        experiment
-            .bench
-            .plot(
-                &data_path,
-                &results_path,
-                &benchmark_info,
-                experiment_dirs.clone(),
-                &config.settings,
-            )
-            .await?;
+
+        pb.set_message(format!(
+            "Experiment {}/{}: {}",
+            current_experiment,
+            total_experiments,
+            style("Generating plots...").dim()
+        ));
+
+        plot(
+            &experiment.plots,
+            PlotType::Individual,
+            &data_path,
+            &plot_path,
+            &config,
+            &benchmark_info,
+            experiment_dirs.clone(),
+            &config.settings,
+            &mut Vec::new(),
+        )
+        .await?;
+
+        debug!("Plotting done");
     }
+
+    pb.finish_with_message(format!(
+        "Completed in {} | Avg: {}/iter",
+        tracker.lock().await.elapsed(),
+        format_seconds(
+            tracker.lock().await.start_time.elapsed().as_secs_f64()
+                / tracker.lock().await.total_units as f64
+        )
+    ));
 
     sleep(Duration::from_secs(3)).await;
 
@@ -242,4 +353,70 @@ fn get_sensor_args(
         }
     }
     bail!("Could not find sensor args for sensor {}", sensor.name())
+}
+
+fn calculate_total_units(config: &Config) -> u64 {
+    config.benches.iter().fold(0, |acc, exp| {
+        let power_states = match &config.settings.nvme_power_states {
+            Some(ps) => ps.len(),
+            None => 1,
+        };
+
+        let bench_args = get_bench_args(&config.bench_args, &*exp.bench).unwrap();
+        let commands = exp
+            .bench
+            .cmds(&config.settings, &*bench_args, &exp.name)
+            .unwrap()
+            .1
+            .len();
+        let iterations = config.settings.max_repeat.unwrap_or(exp.repeat) as u64;
+        acc + power_states as u64 * commands as u64 * iterations
+    })
+}
+struct TimingTracker {
+    start_time: Instant,
+    total_units: u64,
+    completed_units: u64,
+}
+
+impl TimingTracker {
+    fn new(total: u64) -> Self {
+        Self {
+            start_time: Instant::now(),
+            total_units: total,
+            completed_units: 0,
+        }
+    }
+
+    fn increment(&mut self) {
+        self.completed_units += 1;
+    }
+
+    fn eta(&self) -> String {
+        if self.completed_units == 0 {
+            return "N/A".to_string();
+        }
+
+        let elapsed = self.start_time.elapsed().as_secs_f64();
+        let avg_time_per_unit = elapsed / self.completed_units as f64;
+        let remaining_units = self.total_units.saturating_sub(self.completed_units);
+        let eta_seconds = avg_time_per_unit * remaining_units as f64;
+        format_seconds(eta_seconds)
+    }
+
+    fn elapsed(&self) -> String {
+        format_seconds(self.start_time.elapsed().as_secs_f64())
+    }
+}
+
+fn format_seconds(seconds: f64) -> String {
+    let hours = (seconds / 3600.0) as u64;
+    let minutes = ((seconds % 3600.0) / 60.0) as u64;
+    let seconds = (seconds % 60.0) as u64;
+
+    if hours > 0 {
+        format!("{:02}:{:02}:{:02}", hours, minutes, seconds)
+    } else {
+        format!("{:02}:{:02}", minutes, seconds)
+    }
 }

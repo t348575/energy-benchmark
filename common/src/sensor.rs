@@ -28,7 +28,7 @@ pub trait Sensor: Debug + Send {
     /// Name of the sensor, for identification
     fn name(&self) -> &'static str;
     /// Should start an async task that collects sensor data using [`tokio::task::spawn`]
-    /// 
+    ///
     /// Arguments:
     /// * `args` - Specific arguments to the sensor
     /// * `rx` - Requests to the sensor to start/stop recording

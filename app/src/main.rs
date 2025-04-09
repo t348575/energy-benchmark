@@ -1,16 +1,16 @@
 use std::{collections::HashMap, path::PathBuf};
 
 use clap::{Parser, Subcommand};
-use common::{bench::BenchmarkInfo, config::Config};
+use common::{bench::BenchmarkInfo, config::Config, plot::PlotType};
 use eyre::Result;
-use tokio::fs::{create_dir_all, read_dir, read_to_string};
+use tokio::fs::{create_dir_all, read_dir, read_to_string, remove_dir_all};
+use tracing::error;
 use tracing_subscriber::{
     EnvFilter,
     fmt::{layer, time::ChronoLocal},
     layer::SubscriberExt,
     util::SubscriberInitExt,
 };
-use tracing::error;
 
 mod bench;
 
@@ -39,9 +39,9 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let modules = macros::plugin_names_str!();
+    let modules: &[&str] = macros::plugin_names_str!();
     let log_level = std::env::var("RUST_LOG").unwrap_or("warn".to_owned());
-    let file_appender = tracing_appender::rolling::never(".", "log.log".to_owned());
+    let file_appender = tracing_appender::rolling::never(".", "log.log");
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
 
     let mut env_filter = EnvFilter::new(format!("energy_benchmark={log_level}"))
@@ -63,17 +63,20 @@ async fn main() -> Result<()> {
 
     let args = Cli::parse();
 
-    default_bench::init_benches();
-    default_sensor::init_sensors();
+    default_benches::init_benches();
+    default_sensors::init_sensors();
+    default_plots::init_plots();
     pyo3::prepare_freethreaded_python();
 
     create_dir_all("results").await?;
     match args.command {
         Commands::Ls => list_benchmarks().await?,
-        Commands::Bench { config_file } => if let Err(err) = bench::run_benchmark(config_file).await {
-            error!("{err:#?}");
-            return Err(err);
-        },
+        Commands::Bench { config_file } => {
+            if let Err(err) = bench::run_benchmark(config_file).await {
+                error!("{err:#?}");
+                return Err(err);
+            }
+        }
         Commands::Plot { folder } => plot(&folder).await?,
     };
 
@@ -108,6 +111,9 @@ async fn get_benchmarks() -> Result<Vec<(String, PathBuf)>> {
 
 async fn plot(folder: &str) -> Result<()> {
     let base_path = PathBuf::from(folder);
+    let plot_path = base_path.join("plots");
+    _ = remove_dir_all(&plot_path).await;
+    create_dir_all(&plot_path).await?;
     let config: Config =
         serde_yml::from_str(&read_to_string(base_path.join("config.yaml")).await?)?;
     let data_path = base_path.join("data");
@@ -115,23 +121,42 @@ async fn plot(folder: &str) -> Result<()> {
     let benchmark_info: HashMap<String, BenchmarkInfo> =
         serde_json::from_str(&read_to_string(base_path.join("info.json")).await?)?;
 
-    for experiment in config.benches {
+    for experiment in &config.benches {
         let experiment_dirs = benchmark_info
             .keys()
             .filter(|x| x.starts_with(&experiment.name))
             .map(|x| x.to_owned())
             .collect::<Vec<_>>();
 
-        experiment
-            .bench
-            .plot(
-                &data_path,
-                &base_path,
-                &benchmark_info,
-                experiment_dirs.clone(),
-                &config.settings,
-            )
-            .await?;
+        common::plot::plot(
+            &experiment.plots,
+            PlotType::Individual,
+            &data_path,
+            &plot_path,
+            &config,
+            &benchmark_info,
+            experiment_dirs.clone(),
+            &config.settings,
+            &mut Vec::new(),
+        )
+        .await?;
     }
+
+    let mut completed_dirs = Vec::new();
+    for experiment in &config.benches {
+        common::plot::plot(
+            &experiment.plots,
+            PlotType::Total,
+            &data_path,
+            &plot_path,
+            &config,
+            &benchmark_info,
+            benchmark_info.keys().cloned().collect(),
+            &config.settings,
+            &mut completed_dirs,
+        )
+        .await?;
+    }
+
     Ok(())
 }

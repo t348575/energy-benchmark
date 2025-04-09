@@ -18,7 +18,11 @@ mod ffi {
     }
 }
 
-use std::{sync::Arc, time::Duration};
+use std::{
+    cmp::min,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use common::{
     sensor::{Sensor, SensorArgs, SensorReply, SensorRequest},
@@ -49,7 +53,7 @@ struct InternalPmt(UniquePtr<ffi::PMT>);
 unsafe impl Send for InternalPmt {}
 unsafe impl Send for ffi::State {}
 
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[derive(Debug, Default, PartialEq, Clone, Serialize, Deserialize)]
 pub enum SensorType {
     #[default]
     None,
@@ -70,7 +74,7 @@ impl InternalPmt {
     fn new(sensor: SensorType) -> Result<Self, PmtError> {
         ffi::create(sensor.try_into()?)
             .map_err(|e| PmtError::CreationFailed(e.to_string()))
-            .map(|inner| Self(inner))
+            .map(Self)
     }
 
     fn get_sensor_name(&mut self, sensor_id: i32) -> Result<String, PmtError> {
@@ -144,21 +148,42 @@ impl Sensor for Pmt {
 fn init_pmt(args: &PmtConfig) -> Result<(Arc<Mutex<InternalPmt>>, Vec<String>)> {
     let mut sensor = InternalPmt::new(args.sensor.clone())?;
     let mut sensor_names = Vec::new();
-    for idx in &args.indexes {
+    for (data_idx, idx) in args.indexes.iter().enumerate() {
         if *idx == -1 {
             sensor_names.push("Total".to_owned());
         } else {
-            sensor_names.push(sensor.get_sensor_name(*idx)?);
+            let name = sensor.get_sensor_name(*idx)?;
+            if args.sensor == SensorType::RAPL
+                && !sensor_names.is_empty()
+                && data_idx - 1 == *idx as usize
+                && sensor_names.last().unwrap().starts_with("package-")
+                && name.eq("dram")
+            {
+                let num = format!("{}", sensor_names.last().unwrap().chars().last().unwrap())
+                    .parse::<u32>()
+                    .unwrap();
+                sensor_names.push(format!("dram-{}", num));
+                continue;
+            }
+            sensor_names.push(name);
         }
     }
-    debug!("PMT sensor with {:?} initialized", args.sensor);
+    debug!(
+        "PMT sensor with {:?} initialized with sensors {:?}",
+        args.sensor, sensor_names
+    );
     Ok((Arc::new(Mutex::new(sensor)), sensor_names))
 }
 
 async fn read_pmt(args: PmtConfig, sensor: Arc<Mutex<InternalPmt>>) -> Result<Vec<f64>> {
+    let start_time = Instant::now();
     let mut sensor = sensor.lock().await;
     let start = sensor.read()?;
-    sleep(Duration::from_millis(1)).await;
+    sleep(Duration::from_micros(min(
+        1000 - start_time.elapsed().as_micros() as u64,
+        1000,
+    )))
+    .await;
     let end = sensor.read()?;
     let readings = args
         .indexes

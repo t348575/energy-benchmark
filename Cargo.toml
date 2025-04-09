@@ -1,6 +1,11 @@
 [workspace]
-members = ["app", "common", "macros", "benches/default-bench", "sensors/default-sensor", "benches/fio", "sensors/powersensor_3", "sensors/pmt", "sensors/netio-http", "sensors/sysinfo",]
+members = ["app", "common", "macros", "benches/default-benches", "sensors/default-sensors", "plots/default-plots"]
 resolver = "3"
+
+[package]
+name = "setup"
+version = "0.1.0"
+edition = "2024"
 
 [workspace.dependencies]
 pyo3 = "0.24"
@@ -13,18 +18,18 @@ tracing = "0.1"
 cxx = "1.0"
 cxx-build = "1.0"
 thiserror = "2.0"
+itertools = "0.14"
+regex = "1.11"
+serde = { version = "1.0", features = ["derive"] }
+tokio = { version = "1.44", features = ["full"] }
+common = { path = "common" }
+
+[build-dependencies]
+toml_edit = "0.22"
+toml = "0.8"
+eyre.workspace = true
+regex.workspace = true
 
 [profile.release]
 opt-level = 3
 strip = true
-
-[workspace.dependencies.serde]
-version = "1.0"
-features = [ "derive",]
-
-[workspace.dependencies.tokio]
-version = "1.44"
-features = [ "full",]
-
-[workspace.dependencies.common]
-path = "./common"

@@ -2,9 +2,9 @@ import common
 import numpy as np
 import matplotlib.pyplot as plt
 
-def gen_plots(data, filepath, x_label_name, labels):
-    x = np.arange(len(labels))
+def gen_plots(data, filepath, x_label_name, experiment_name, labels):
     width = 0.25
+    x = np.arange(len(labels))
 
     _, ax = plt.subplots(figsize=(12, 6))
     bar0 = ax.bar(x - width, data[0], width, label='ps0 (8.5W)')
@@ -14,12 +14,13 @@ def gen_plots(data, filepath, x_label_name, labels):
     for b in [bar0, bar1, bar2]:
         ax.bar_label(b, fmt='%.2f', padding=3, rotation=45)
 
-    ax.set_ylabel("Latency (ms)")
-    ax.set_xlabel(x_label_name)
-    ax.set_title(f"Latency for {x_label_name.lower()} vs. power state")
+    ax.set_ylabel("Throughput (MiB/s)")
+    ax.set_xlabel(f"{x_label_name} {experiment_name}")
+    ax.set_title(f"Throughput for {x_label_name.lower()} vs. power state")
     ax.set_xticks(x)
     ax.set_xticklabels(labels)
     ax.legend()
 
     plt.tight_layout()
     plt.savefig(filepath, format='pdf')
+    plt.close()

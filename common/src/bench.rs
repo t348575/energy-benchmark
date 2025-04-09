@@ -1,5 +1,5 @@
 use core::fmt::Debug;
-use std::{collections::HashMap, path::PathBuf};
+use std::{path::Path, process::Stdio};
 
 use downcast_rs::{Downcast, impl_downcast};
 use dyn_clone::{DynClone, clone_trait_object};
@@ -7,7 +7,7 @@ use eyre::{Context, ContextCompat, Result};
 use flume::Sender;
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
-use tracing::error;
+use tracing::{debug, error};
 
 use crate::{config::Settings, sensor::SensorRequest};
 
@@ -41,7 +41,7 @@ pub trait Bench: Debug + DynClone + Downcast + Send + Sync {
     /// Arguments:
     /// * `args` - previously generated args by [`Bench::cmds`]
     /// * `final_results_dir` - final directory for results of run to be stored
-    fn add_path_args(&self, args: &mut Vec<String>, final_results_dir: &PathBuf);
+    fn add_path_args(&self, args: &mut Vec<String>, final_results_dir: &Path);
     /// Check if results of an experiment run are OK (Check for deviations, etc.)
     ///
     /// Arguments:
@@ -50,7 +50,7 @@ pub trait Bench: Debug + DynClone + Downcast + Send + Sync {
     ///
     /// Returns:
     /// * A list of index of directories (indexes corresponding to `dirs`) with results to be removed (and re-run)
-    async fn check_results(&self, results_dir: &PathBuf, dirs: &[String]) -> Result<Vec<usize>>;
+    async fn check_results(&self, results_dir: &Path, dirs: &[String]) -> Result<Vec<usize>>;
     /// Default benchmark runner, override for custom logic
     ///
     /// Arguments:
@@ -64,18 +64,21 @@ pub trait Bench: Debug + DynClone + Downcast + Send + Sync {
         program: &str,
         args: &[String],
         sensors: &[Sender<SensorRequest>],
-        final_results_dir: &PathBuf,
+        final_results_dir: &Path,
         bench_copy: Box<dyn Bench>,
     ) -> Result<()> {
         let mut child = Command::new(program)
             .args(args)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .spawn()
             .context("Running benchmark")?;
+        debug!("Benchmark started");
 
         for sensor in sensors {
             sensor
                 .send_async(SensorRequest::StartRecording {
-                    dir: final_results_dir.clone(),
+                    dir: final_results_dir.to_path_buf(),
                     args: args.to_vec(),
                     program: program.to_string(),
                     bench: bench_copy.clone(),
@@ -83,8 +86,10 @@ pub trait Bench: Debug + DynClone + Downcast + Send + Sync {
                 })
                 .await?;
         }
+        debug!("Sensors started");
 
         let status = child.wait().await?;
+        debug!("Benchmark done");
         if !status.success() {
             error!("Process exitied with {}", status.code().unwrap_or_default());
         }
@@ -92,24 +97,9 @@ pub trait Bench: Debug + DynClone + Downcast + Send + Sync {
         for sensor in sensors {
             sensor.send_async(SensorRequest::StopRecording).await?;
         }
+        debug!("Sensors stopped");
         Ok(())
     }
-    /// Generate plots for the benchmark runner
-    /// 
-    /// Arguments:
-    /// * `data_path` - Path to the experiment results folder, ie. experiment-run/data
-    /// * `results_path` - Path to the results fodler, ie. experiment-run
-    /// * `info` - HashMap<folder name, [`BenchmarkInfo`]> of al experiments in current run
-    /// * `dirs` - All folders containing results in current run
-    /// * `settings` - Settings from config file
-    async fn plot(
-        &self,
-        data_path: &PathBuf,
-        results_path: &PathBuf,
-        info: &HashMap<String, BenchmarkInfo>,
-        dirs: Vec<String>,
-        settings: &Settings,
-    ) -> Result<()>;
 }
 clone_trait_object!(Bench);
 impl_downcast!(Bench);
@@ -122,6 +112,7 @@ pub trait BenchArgs: Debug + DynClone + Downcast + Send + Sync {
 clone_trait_object!(BenchArgs);
 impl_downcast!(BenchArgs);
 
+#[derive(Debug)]
 pub struct Cmd {
     /// Arguments
     pub args: Vec<String>,

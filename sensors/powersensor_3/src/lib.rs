@@ -14,7 +14,11 @@ mod ffi {
     }
 }
 
-use std::{sync::Arc, time::Duration};
+use std::{
+    cmp::min,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use common::{
     sensor::{Sensor, SensorArgs, SensorReply, SensorRequest},
@@ -47,7 +51,7 @@ impl InternalPowersensor3 {
     fn new(device: &str) -> Result<Self, PowerSensorError> {
         ffi::create(device)
             .map_err(|e| PowerSensorError::CreationFailed(e.to_string()))
-            .map(|inner| Self(inner))
+            .map(Self)
     }
 
     fn read(&self) -> Result<SensorState, PowerSensorError> {
@@ -147,8 +151,13 @@ async fn read_powersensor3(
     sensor: Arc<Mutex<InternalPowersensor3>>,
 ) -> Result<Vec<f64>> {
     let sensor = sensor.lock().await;
+    let start_time = Instant::now();
     let start = sensor.read()?;
-    sleep(Duration::from_millis(1)).await;
+    sleep(Duration::from_micros(min(
+        1000 - start_time.elapsed().as_micros() as u64,
+        1000,
+    )))
+    .await;
     let end = sensor.read()?;
 
     let readings = args

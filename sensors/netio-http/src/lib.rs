@@ -1,4 +1,7 @@
-use std::time::{Duration, Instant};
+use std::{
+    cmp::min,
+    time::{Duration, Instant},
+};
 
 use common::{
     sensor::{Sensor, SensorArgs, SensorReply, SensorRequest},
@@ -103,9 +106,10 @@ async fn read_netio_http(args: NetioHttpConfig) -> Result<Vec<f64>> {
     if res.outputs.len() < 2 {
         bail!("Expected 2 outputs, got {}", res.outputs.len());
     }
-    sleep(Duration::from_millis(
+    sleep(Duration::from_millis(min(
         500 - start.elapsed().as_millis() as u64,
-    ))
+        500,
+    )))
     .await;
     Ok(vec![
         res.global_measure.voltage,
