@@ -1,0 +1,15 @@
+[package]
+name = "rapl"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+thiserror.workspace = true
+serde.workspace = true
+common.workspace = true
+flume.workspace = true
+eyre.workspace = true
+typetag.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+async-io.workspace = true

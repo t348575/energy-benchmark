@@ -7,6 +7,7 @@ use common::{
 };
 use eyre::{Context, ContextCompat, Result};
 use itertools::iproduct;
+use regex::Regex;
 use result::FioResult;
 use serde::{Deserialize, Serialize};
 use tokio::fs::read_to_string;
@@ -32,6 +33,7 @@ pub struct Fio {
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct FioConfig {
     pub program: Option<String>,
+    pub log_avg: Option<usize>,
 }
 
 #[typetag::serde]
@@ -87,12 +89,27 @@ impl Bench for Fio {
         Box::new(Self::default())
     }
 
+    fn default_bench_args(&self) -> Box<dyn BenchArgs> {
+        Box::new(FioConfig::default())
+    }
+
+    fn runtime_estimate(&self) -> Result<u64> {
+        let runtime = parse_time(self.runtime.as_ref().unwrap_or(&"1s".to_owned()))?;
+        let ramp = parse_time(self.ramp_time.as_ref().unwrap_or(&"1s".to_owned()))?;
+        let total = runtime + ramp;
+        Ok(total as u64)
+    }
+
     fn cmds(
         &self,
         settings: &Settings,
         bench_args: &dyn BenchArgs,
         name: &str,
     ) -> Result<(String, Vec<Cmd>)> {
+        let bench_args = bench_args
+            .downcast_ref::<FioConfig>()
+            .context("Invalid bench args, expected args for fio")?;
+
         let jobs = self.num_jobs.clone();
         let jobs_vec = jobs.unwrap_or(vec![1]);
         let extra_options = self.extra_options.clone();
@@ -117,7 +134,7 @@ impl Bench for Fio {
             extra_options: Some(vec![extra_options]),
             num_jobs: Some(vec![job]),
         })
-        .map(move |bench| {
+        .map(|bench| {
             let mut args = vec![
                 "--name",
                 "--filename",
@@ -141,7 +158,11 @@ impl Bench for Fio {
             .collect::<Vec<_>>();
 
             args.push("--output-format=json+".to_owned());
-            args.push("--log_avg_msec=10".to_owned());
+
+            let log_avg = bench_args.log_avg.unwrap_or(10);
+            if log_avg > 0 {
+                args.push(format!("--log_avg_msec={log_avg}"));
+            }
             if let Some(size) = &bench.size {
                 args.push(format!("--size={size}"));
             }
@@ -180,10 +201,6 @@ impl Bench for Fio {
         })
         .collect();
 
-        let bench_args = bench_args
-            .downcast_ref::<FioConfig>()
-            .context("Invalid bench args, expected args for fio")?;
-
         Ok((bench_args.program.clone().unwrap_or("fio".to_owned()), cmds))
     }
 
@@ -216,8 +233,8 @@ impl Bench for Fio {
 
         for (idx, item) in dirs.iter().enumerate() {
             // TODO: check if sensor exists
-            let data = read_to_string(results_path.join(item).join("pmt-RAPL.csv")).await?;
-            if get_mean_power(&data, "Total").is_err() && !outliers.contains(&idx){
+            let data = read_to_string(results_path.join(item).join("rapl.csv")).await?;
+            if get_mean_power(&data, "Total").is_err() && !outliers.contains(&idx) {
                 outliers.push(idx);
             }
         }
@@ -246,4 +263,19 @@ impl FioTestTypeConfig {
         cmds[0] = format!("--rw={}", cmds[0]);
         cmds
     }
+}
+
+fn parse_time(time: &str) -> Result<usize> {
+    let re = Regex::new(r"^(\d+)([smh])$").ok().unwrap();
+    let caps = re.captures(time).context("Invalid time format")?;
+
+    let value: usize = caps.get(1).unwrap().as_str().parse().ok().unwrap();
+    let unit = caps.get(2).unwrap().as_str();
+
+    Ok(match unit {
+        "s" => value * 1000,
+        "m" => value * 60 * 1000,
+        "h" => value * 60 * 60 * 1000,
+        _ => value * 1000,
+    })
 }

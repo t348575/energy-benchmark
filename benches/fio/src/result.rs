@@ -55,11 +55,11 @@ pub struct JobOptions {
     pub ioengine: String,
     pub time_based: String,
     pub iodepth: String,
-    pub runtime: String,
+    pub runtime: Option<String>,
     pub size: Option<String>,
     pub write_bw_log: String,
     pub write_iops_log: String,
-    pub log_avg_msec: String,
+    pub log_avg_msec: Option<String>,
     pub write_lat_log: String,
 }
 
@@ -101,16 +101,6 @@ pub struct SlatNs {
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ClatNs {
-    pub min: i64,
-    pub max: i64,
-    pub mean: f64,
-    pub stddev: f64,
-    #[serde(rename = "N")]
-    pub n: i64,
-}
-
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LatNs {
     pub min: i64,
     pub max: i64,
@@ -131,9 +121,9 @@ pub struct Write {
     pub total_ios: i64,
     pub short_ios: i64,
     pub drop_ios: i64,
-    pub slat_ns: SlatNs2,
-    pub clat_ns: ClatNs2,
-    pub lat_ns: LatNs2,
+    pub slat_ns: SlatNs,
+    pub clat_ns: ClatNs,
+    pub lat_ns: LatNs,
     pub bw_min: i64,
     pub bw_max: i64,
     pub bw_agg: f64,
@@ -148,17 +138,7 @@ pub struct Write {
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct SlatNs2 {
-    pub min: i64,
-    pub max: i64,
-    pub mean: f64,
-    pub stddev: f64,
-    #[serde(rename = "N")]
-    pub n: i64,
-}
-
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ClatNs2 {
+pub struct ClatNs {
     pub min: i64,
     pub max: i64,
     pub mean: f64,
@@ -208,16 +188,6 @@ pub struct Percentile {
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct LatNs2 {
-    pub min: i64,
-    pub max: i64,
-    pub mean: f64,
-    pub stddev: f64,
-    #[serde(rename = "N")]
-    pub n: i64,
-}
-
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Trim {
     pub io_bytes: i64,
     pub io_kbytes: i64,
@@ -228,9 +198,9 @@ pub struct Trim {
     pub total_ios: i64,
     pub short_ios: i64,
     pub drop_ios: i64,
-    pub slat_ns: SlatNs3,
-    pub clat_ns: ClatNs3,
-    pub lat_ns: LatNs3,
+    pub slat_ns: SlatNs,
+    pub clat_ns: ClatNs,
+    pub lat_ns: LatNs,
     pub bw_min: i64,
     pub bw_max: i64,
     pub bw_agg: f64,
@@ -245,49 +215,9 @@ pub struct Trim {
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct SlatNs3 {
-    pub min: i64,
-    pub max: i64,
-    pub mean: f64,
-    pub stddev: f64,
-    #[serde(rename = "N")]
-    pub n: i64,
-}
-
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ClatNs3 {
-    pub min: i64,
-    pub max: i64,
-    pub mean: f64,
-    pub stddev: f64,
-    #[serde(rename = "N")]
-    pub n: i64,
-}
-
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct LatNs3 {
-    pub min: i64,
-    pub max: i64,
-    pub mean: f64,
-    pub stddev: f64,
-    #[serde(rename = "N")]
-    pub n: i64,
-}
-
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Sync {
     pub total_ios: i64,
-    pub lat_ns: LatNs4,
-}
-
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct LatNs4 {
-    pub min: i64,
-    pub max: i64,
-    pub mean: f64,
-    pub stddev: f64,
-    #[serde(rename = "N")]
-    pub n: i64,
+    pub lat_ns: LatNs,
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]

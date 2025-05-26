@@ -25,7 +25,7 @@ pub trait Plot: Debug + DynClone + Downcast + Send + Sync {
     /// The names of the sensors that this plot requires
     fn required_sensors(&self) -> &'static [&'static str];
     /// Plots the data
-    /// 
+    ///
     /// Arguments:
     /// * `plot_type` - Individual or all config dirs passed
     /// * `data_path` - The path to the data, ie. /data

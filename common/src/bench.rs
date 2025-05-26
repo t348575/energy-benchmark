@@ -1,15 +1,25 @@
 use core::fmt::Debug;
-use std::{path::Path, process::Stdio};
+use std::{collections::HashMap, path::Path, pin::Pin, process::Stdio, time::Instant};
 
 use downcast_rs::{Downcast, impl_downcast};
 use dyn_clone::{DynClone, clone_trait_object};
-use eyre::{Context, ContextCompat, Result};
+use eyre::{Context, ContextCompat, Result, bail};
 use flume::Sender;
 use serde::{Deserialize, Serialize};
-use tokio::process::Command;
-use tracing::{debug, error};
+use tokio::{
+    fs::File,
+    io::{AsyncReadExt, AsyncWriteExt},
+    process::{Child, Command},
+    spawn,
+    task::JoinHandle,
+};
+use tracing::debug;
 
-use crate::{config::Settings, sensor::SensorRequest};
+use crate::{
+    config::{Config, Settings},
+    sensor::SensorRequest,
+    util::read_until_prompt,
+};
 
 #[typetag::serde(tag = "type")]
 #[async_trait::async_trait]
@@ -20,6 +30,7 @@ pub trait Bench: Debug + DynClone + Downcast + Send + Sync {
     fn default_bench() -> Box<dyn Bench>
     where
         Self: Sized + 'static;
+    fn default_bench_args(&self) -> Box<dyn BenchArgs>;
     /// Generates the commands to run the experiment with each argument combination to test
     ///
     /// Arguments:
@@ -56,21 +67,28 @@ pub trait Bench: Debug + DynClone + Downcast + Send + Sync {
     /// Arguments:
     /// * `program` - Program to run
     /// * `args` - Arguments to run program with
+    /// /// * `settings` - Settings from config file
     /// * `sensors` - Sensors that are available to record data
     /// * `final_results_dir` - Directory to store results in
-    /// * `bench_copy` - Copy of the benchmark object (ie. self)
+    /// * `bench_obj` - Copy of the benchmark object (ie. self)
+    /// * `config` - Config object
+    /// * `last_experiment` - The last experiment that was run (helps prevent repetitive setup steps)
     async fn run(
         &self,
         program: &str,
         args: &[String],
+        settings: &Settings,
         sensors: &[Sender<SensorRequest>],
         final_results_dir: &Path,
-        bench_copy: Box<dyn Bench>,
+        bench_obj: Box<dyn Bench>,
+        _config: &Config,
+        _last_experiment: &Option<Box<dyn Bench>>,
     ) -> Result<()> {
-        let mut child = Command::new(program)
+        let child = Command::new(program)
             .args(args)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .envs(settings.env.as_ref().unwrap_or(&HashMap::new()))
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
             .spawn()
             .context("Running benchmark")?;
         debug!("Benchmark started");
@@ -81,17 +99,21 @@ pub trait Bench: Debug + DynClone + Downcast + Send + Sync {
                     dir: final_results_dir.to_path_buf(),
                     args: args.to_vec(),
                     program: program.to_string(),
-                    bench: bench_copy.clone(),
+                    bench: bench_obj.clone(),
                     pid: child.id().context("Could not get benchmark process id")?,
                 })
                 .await?;
         }
         debug!("Sensors started");
 
-        let status = child.wait().await?;
+        let output = child.wait_with_output().await?;
         debug!("Benchmark done");
-        if !status.success() {
-            error!("Process exitied with {}", status.code().unwrap_or_default());
+        if !output.status.success() {
+            bail!(
+                "Process exitied with {}, err: {}",
+                output.status.code().unwrap_or_default(),
+                String::from_utf8(output.stderr).unwrap()
+            );
         }
 
         for sensor in sensors {
@@ -100,6 +122,11 @@ pub trait Bench: Debug + DynClone + Downcast + Send + Sync {
         debug!("Sensors stopped");
         Ok(())
     }
+    /// Return an estimate of how long the benchmark will take to run
+    ///
+    /// Returns:
+    /// * An estimate in milliseconds of how long the benchmark will take to run
+    fn runtime_estimate(&self) -> Result<u64>;
 }
 clone_trait_object!(Bench);
 impl_downcast!(Bench);
@@ -130,4 +157,35 @@ pub struct BenchmarkInfo {
     pub name: String,
     pub hash: String,
     pub args: Box<dyn Bench>,
+}
+
+pub async fn trace_nvme_calls(
+    trace_out_dir: &Path,
+    settings: &Settings,
+) -> Result<(Child, JoinHandle<()>, Instant)> {
+    let trace_start_time = Instant::now();
+    let mut bpftrace = Command::new("bpftrace")
+        .arg("-e")
+        .arg(include_str!("trace.bt"))
+        .envs(settings.env.as_ref().unwrap_or(&HashMap::new()))
+        .stdout(Stdio::piped())
+        .spawn()
+        .context("Running bpftrace")?;
+
+    let mut bpf_file = File::create(trace_out_dir.join("trace.out")).await?;
+    let mut bpftrace_stdout = bpftrace.stdout.take().context("Could not take stdout")?;
+    let trace_job = spawn(async move {
+        let mut stdout = Pin::new(&mut bpftrace_stdout);
+        read_until_prompt(&mut stdout, "Attaching").await.unwrap();
+        loop {
+            let mut buf = [0u8; 1024];
+            let n = stdout.read(&mut buf).await.unwrap();
+            if n == 0 {
+                break;
+            }
+            bpf_file.write(&buf[0..n]).await.unwrap();
+        }
+        drop(bpf_file);
+    });
+    Ok((bpftrace, trace_job, trace_start_time))
 }

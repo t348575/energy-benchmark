@@ -6,7 +6,7 @@ use std::{
 
 use common::{
     sensor::{Sensor, SensorArgs, SensorReply, SensorRequest},
-    util::simple_sensor_reader,
+    util::sensor_reader,
 };
 use eyre::{ContextCompat, Result};
 use flume::{Receiver, Sender};
@@ -52,13 +52,13 @@ impl Sensor for Sysinfo {
 
         let args = args.clone();
         let handle = spawn(async move {
-            if let Err(err) = simple_sensor_reader(
+            if let Err(err) = sensor_reader(
                 rx,
                 tx,
                 "sysinfo",
                 args,
                 init_sysinfo,
-                |args: &SysinfoConfig, sensor: &Arc<Mutex<System>>, request: &SensorRequest| -> std::pin::Pin<Box<dyn Future<Output = Result<Vec<f64>>> + Send>> {
+                |args: &SysinfoConfig, sensor: &Arc<Mutex<System>>, request: &SensorRequest, _| -> std::pin::Pin<Box<dyn Future<Output = Result<Vec<f64>>> + Send>> {
                     match request {
                         SensorRequest::StartRecording { pid, .. } => Box::pin(read_sysinfo(args.clone(), sensor.clone(), *pid)),
                         _ => unreachable!()
@@ -76,7 +76,7 @@ impl Sensor for Sysinfo {
     }
 }
 
-fn init_sysinfo(_: &SysinfoConfig) -> Result<(Arc<Mutex<System>>, Vec<String>)> {
+async fn init_sysinfo(_: SysinfoConfig) -> Result<(Arc<Mutex<System>>, Vec<String>)> {
     let mut sys = System::new_all();
     sys.refresh_all();
 

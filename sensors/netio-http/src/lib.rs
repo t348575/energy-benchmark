@@ -5,7 +5,7 @@ use std::{
 
 use common::{
     sensor::{Sensor, SensorArgs, SensorReply, SensorRequest},
-    util::simple_sensor_reader,
+    util::sensor_reader,
 };
 use eyre::{ContextCompat, Result, bail};
 use flume::{Receiver, Sender};
@@ -46,13 +46,13 @@ impl Sensor for NetioHttp {
 
         let args = args.clone();
         let handle = spawn(async move {
-            if let Err(err) = simple_sensor_reader(
+            if let Err(err) = sensor_reader(
                 rx,
                 tx,
                 "netio-http",
                 args,
                 init_netio_http,
-                |args: &NetioHttpConfig, _, _| -> std::pin::Pin<Box<dyn Future<Output = Result<Vec<f64>>> + Send>> {
+                |args: &NetioHttpConfig, _, _, _| -> std::pin::Pin<Box<dyn Future<Output = Result<Vec<f64>>> + Send>> {
                     Box::pin(read_netio_http(args.clone()))
                 },
             )
@@ -67,7 +67,7 @@ impl Sensor for NetioHttp {
     }
 }
 
-fn init_netio_http(_: &NetioHttpConfig) -> Result<((), Vec<String>)> {
+async fn init_netio_http(_: NetioHttpConfig) -> Result<((), Vec<String>)> {
     let sensor_names = [
         "voltage",
         "current",

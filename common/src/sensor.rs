@@ -7,6 +7,7 @@ use eyre::Result;
 use flume::{Receiver, Sender};
 use tokio::task::JoinHandle;
 
+#[derive(Debug)]
 pub enum SensorRequest {
     StartRecording {
         dir: PathBuf,

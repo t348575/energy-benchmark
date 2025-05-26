@@ -1,0 +1,14 @@
+[package]
+name = "diskstat"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+serde.workspace = true
+common.workspace = true
+typetag.workspace = true
+tracing.workspace = true
+flume.workspace = true
+eyre.workspace = true
+tokio.workspace = true
+async-io.workspace = true

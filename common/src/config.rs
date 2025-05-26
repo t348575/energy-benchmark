@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -20,9 +22,11 @@ pub struct Config {
 pub struct Settings {
     pub numa: Option<NumaConfig>,
     pub device: String,
+    pub custom_power_state_setter: Option<bool>,
     pub nvme_power_states: Option<Vec<usize>>,
     pub nvme_cli_device: Option<String>,
     pub max_repeat: Option<usize>,
+    pub env: Option<HashMap<String, String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

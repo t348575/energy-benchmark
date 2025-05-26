@@ -13,6 +13,7 @@ eyre.workspace = true
 flume.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+async-io.workspace = true
 
 [build-dependencies]
 cxx-build.workspace = true

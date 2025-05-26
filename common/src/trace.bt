@@ -1,0 +1,11 @@
+tracepoint:nvme:nvme_setup_cmd
+{
+    @io_graph[ustack, kstack] = count();
+}
+
+interval:s:1
+{
+    printf("time: %lld\n", nsecs);
+    print(@io_graph);
+    clear(@io_graph);
+}

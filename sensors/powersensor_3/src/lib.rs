@@ -22,14 +22,14 @@ use std::{
 
 use common::{
     sensor::{Sensor, SensorArgs, SensorReply, SensorRequest},
-    util::simple_sensor_reader,
+    util::sensor_reader,
 };
 use cxx::UniquePtr;
 use eyre::{ContextCompat, Result};
 use flume::{Receiver, Sender};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tokio::{spawn, sync::Mutex, task::JoinHandle, time::sleep};
+use tokio::{spawn, sync::Mutex, task::JoinHandle};
 use tracing::{debug, error};
 
 #[derive(Error, Debug)]
@@ -109,14 +109,14 @@ impl Sensor for Powersensor3 {
 
         let args = args.clone();
         let handle = spawn(async move {
-            if let Err(err) = simple_sensor_reader(
+            if let Err(err) = sensor_reader(
                 rx,
                 tx,
                 "powersensor3",
                 args,
                 init_powersensor3,
-                |args: &Powersensor3Config, sensor: &Arc<Mutex<InternalPowersensor3>>, _| -> std::pin::Pin<Box<dyn Future<Output = Result<Vec<f64>>> + Send>> {
-                    Box::pin(read_powersensor3(args.clone(), sensor.clone()))
+                |args: &Powersensor3Config, sensor: &Arc<Mutex<InternalPowersensor3>>, _, last_time| -> std::pin::Pin<Box<dyn Future<Output = Result<Vec<f64>>> + Send>> {
+                    Box::pin(read_powersensor3(args.clone(), sensor.clone(), last_time))
                 },
             )
             .await
@@ -130,8 +130,8 @@ impl Sensor for Powersensor3 {
     }
 }
 
-fn init_powersensor3(
-    args: &Powersensor3Config,
+async fn init_powersensor3(
+    args: Powersensor3Config,
 ) -> Result<(Arc<Mutex<InternalPowersensor3>>, Vec<String>)> {
     let sensor = InternalPowersensor3::new(&args.device)?;
     let mut sensor_names = Vec::new();
@@ -149,12 +149,14 @@ fn init_powersensor3(
 async fn read_powersensor3(
     args: Powersensor3Config,
     sensor: Arc<Mutex<InternalPowersensor3>>,
+    last_time: Instant,
 ) -> Result<Vec<f64>> {
     let sensor = sensor.lock().await;
     let start_time = Instant::now();
     let start = sensor.read()?;
-    sleep(Duration::from_micros(min(
-        1000 - start_time.elapsed().as_micros() as u64,
+    async_io::Timer::after(Duration::from_micros(min(
+        1000 - start_time.elapsed().as_micros() as u64
+            - (last_time.elapsed().as_micros() as u64).saturating_sub(1000),
         1000,
     )))
     .await;

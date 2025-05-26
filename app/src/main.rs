@@ -3,6 +3,7 @@ use std::{collections::HashMap, path::PathBuf};
 use clap::{Parser, Subcommand};
 use common::{bench::BenchmarkInfo, config::Config, plot::PlotType};
 use eyre::Result;
+use regex::Regex;
 use tokio::fs::{create_dir_all, read_dir, read_to_string, remove_dir_all};
 use tracing::error;
 use tracing_subscriber::{
@@ -18,6 +19,10 @@ mod bench;
 struct Cli {
     #[command(subcommand)]
     command: Commands,
+    #[arg(long, default_value_t = false)]
+    no_progress: bool,
+    #[arg(short, long)]
+    log: Vec<String>,
 }
 
 #[derive(Subcommand)]
@@ -35,20 +40,34 @@ enum Commands {
         #[arg(short, long)]
         folder: String,
     },
+    /// Print generated benchmark commands
+    Print {
+        /// Benchmark folder
+        #[arg(short, long)]
+        folder: String,
+    },
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let modules: &[&str] = macros::plugin_names_str!();
     let log_level = std::env::var("RUST_LOG").unwrap_or("warn".to_owned());
+    let args = Cli::parse();
     let file_appender = tracing_appender::rolling::never(".", "log.log");
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
 
-    let mut env_filter = EnvFilter::new(format!("energy_benchmark={log_level}"))
-        .add_directive(format!("common={log_level}").parse()?);
+    let mut env_filter = EnvFilter::new(format!("energy_benchmark={log_level}"));
+
+    if !args.log.is_empty() {
+        for log in &args.log {
+            env_filter = env_filter.add_directive(log.parse()?);
+        }
+    }
 
     for module in modules {
-        env_filter = env_filter.add_directive(format!("{module}={log_level}").parse()?);
+        if !args.log.iter().any(|x| x.starts_with(module)) {
+            env_filter = env_filter.add_directive(format!("{module}={log_level}").parse()?);
+        }
     }
 
     tracing_subscriber::registry()
@@ -61,23 +80,21 @@ async fn main() -> Result<()> {
         .with(layer().with_writer(non_blocking))
         .init();
 
-    let args = Cli::parse();
-
     default_benches::init_benches();
     default_sensors::init_sensors();
     default_plots::init_plots();
-    pyo3::prepare_freethreaded_python();
 
     create_dir_all("results").await?;
     match args.command {
         Commands::Ls => list_benchmarks().await?,
         Commands::Bench { config_file } => {
-            if let Err(err) = bench::run_benchmark(config_file).await {
+            if let Err(err) = bench::run_benchmark(config_file, args.no_progress).await {
                 error!("{err:#?}");
                 return Err(err);
             }
         }
         Commands::Plot { folder } => plot(&folder).await?,
+        Commands::Print { folder } => print_commands(&folder).await?,
     };
 
     Ok(())
@@ -109,6 +126,33 @@ async fn get_benchmarks() -> Result<Vec<(String, PathBuf)>> {
     Ok(results)
 }
 
+async fn print_commands(folder: &str) -> Result<()> {
+    let base_path = PathBuf::from(folder);
+    let config: Config =
+        serde_yml::from_str(&read_to_string(base_path.join("config.yaml")).await?)?;
+
+    for experiment in &config.benches {
+        fn get_bench_args(
+            bench_args: &[Box<dyn common::bench::BenchArgs>],
+            bench: &dyn common::bench::Bench,
+        ) -> Box<dyn common::bench::BenchArgs> {
+            for args in bench_args {
+                if args.name() == bench.name() {
+                    return args.clone();
+                }
+            }
+            bench.default_bench_args()
+        }
+
+        let bench_args = get_bench_args(&config.bench_args, &*experiment.bench);
+        let commands = experiment
+            .bench
+            .cmds(&config.settings, &*bench_args, &experiment.name)?;
+        println!("Commands: {commands:#?}");
+    }
+    Ok(())
+}
+
 async fn plot(folder: &str) -> Result<()> {
     let base_path = PathBuf::from(folder);
     let plot_path = base_path.join("plots");
@@ -122,9 +166,10 @@ async fn plot(folder: &str) -> Result<()> {
         serde_json::from_str(&read_to_string(base_path.join("info.json")).await?)?;
 
     for experiment in &config.benches {
+        let dir_regex = Regex::new(&format!("^{}-ps(?:-1|[0-4])-\\S+$", experiment.name))?;
         let experiment_dirs = benchmark_info
             .keys()
-            .filter(|x| x.starts_with(&experiment.name))
+            .filter(|x| dir_regex.is_match(x))
             .map(|x| x.to_owned())
             .collect::<Vec<_>>();
 

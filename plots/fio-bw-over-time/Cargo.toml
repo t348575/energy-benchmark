@@ -14,4 +14,4 @@ fio = { path = "../../benches/fio" }
 serde_json.workspace = true
 itertools.workspace = true
 tracing.workspace = true
-rayon = "1.10"
+rayon.workspace = true

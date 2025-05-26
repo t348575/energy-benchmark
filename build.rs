@@ -22,6 +22,7 @@ fn process_components(
     });
 
     let cargo_path = format!("{}/Cargo.toml", default_member);
+    println!("cargo:rerun-if-changed={}", cargo_path);
     let mut cargo_doc = read_to_string(&cargo_path)?.parse::<DocumentMut>()?;
     let deps = cargo_doc["dependencies"]
         .as_table_mut()
@@ -32,7 +33,7 @@ fn process_components(
         if let Some(dep) = dep_item.as_inline_table() {
             if let Some(path) = dep.get("path").and_then(|p| p.as_str()) {
                 if path.starts_with("../") && path.ne("../../macros") {
-                    return false
+                    return false;
                 }
             }
         }
@@ -49,6 +50,32 @@ fn process_components(
             let item_str = item.as_str().unwrap();
             let mut dep_table = table();
             dep_table["path"] = value(format!("../{}", item_str));
+
+            if let Some(overrides) = config.get(item_str).and_then(|v| v.as_table()) {
+                for (k, v) in overrides.iter() {
+                    match v {
+                        toml::Value::Array(arr) => {
+                            let mut edit_arr = toml_edit::Array::default();
+                            for elem in arr.iter() {
+                                if let toml::Value::String(s) = elem {
+                                    edit_arr.push(s.as_str());
+                                }
+                            }
+                            dep_table[k] = Item::Value(Value::Array(edit_arr));
+                        }
+                        toml::Value::Boolean(b) => {
+                            dep_table[k] = value(*b);
+                        }
+                        toml::Value::String(s) => {
+                            dep_table[k] = value(s.clone());
+                        }
+                        toml::Value::Integer(i) => {
+                            dep_table[k] = value(*i);
+                        }
+                        _ => unimplemented!(),
+                    }
+                }
+            }
 
             deps.insert(
                 item_str,
