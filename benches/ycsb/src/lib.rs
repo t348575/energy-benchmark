@@ -6,17 +6,17 @@ use std::{
 };
 
 use common::{
-    bench::{Bench, BenchArgs, Cmd, trace_nvme_calls},
+    bench::{Bench, BenchArgs, Cmd, CmdsResult, trace_nvme_calls},
     config::{Config, Settings},
     sensor::SensorRequest,
-    util::{CommandError, Filesystem, simple_command_with_output},
+    util::{Filesystem, mount_fs, simple_command_with_output_no_dir},
 };
 use eyre::{Context, ContextCompat, Result, bail};
 use flume::Sender;
 use result::parse_output;
 use serde::{Deserialize, Serialize};
 use tokio::{
-    fs::{File, create_dir_all, write},
+    fs::{File, write},
     io::AsyncWriteExt,
     process::Command,
     time::sleep,
@@ -32,11 +32,11 @@ pub struct Ycsb {
     pub vars: Option<HashMap<String, String>>,
     pub db: String,
     pub fs: Filesystem,
-    pub trace: Option<bool>,
     pub threads: Option<u32>,
     #[cfg(feature = "prefill")]
     pub prefill: Option<String>,
     pub _ycsb_op_type: Option<OpType>,
+    pub fs_mount_opts: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -83,7 +83,7 @@ impl Bench for Ycsb {
         settings: &Settings,
         bench_args: &dyn BenchArgs,
         _name: &str,
-    ) -> Result<(String, Vec<Cmd>)> {
+    ) -> Result<CmdsResult> {
         let _bench_args = bench_args
             .downcast_ref::<YcsbConfig>()
             .context("Invalid bench args, expected args for Ycsb")?;
@@ -134,22 +134,16 @@ impl Bench for Ycsb {
             Cmd {
                 args: load,
                 hash: hash_load,
-                arg_obj: Box::new(load_obj),
+                bench_obj: Box::new(load_obj),
             },
             Cmd {
                 args: run,
                 hash: hash_run,
-                arg_obj: Box::new(run_obj),
+                bench_obj: Box::new(run_obj),
             },
         ];
 
-        Ok((program, cmds))
-    }
-
-    fn add_path_args(&self, _args: &mut Vec<String>, _results_dir: &Path) {}
-
-    async fn check_results(&self, _results_path: &Path, _dirs: &[String]) -> Result<Vec<usize>> {
-        Ok(vec![])
+        Ok(CmdsResult { program, cmds })
     }
 
     async fn run(
@@ -164,7 +158,14 @@ impl Bench for Ycsb {
         last_experiment: &Option<Box<dyn Bench>>,
     ) -> Result<()> {
         let ycsb_mount = final_results_dir.join("ycsb-mount");
-        _ = create_dir_all(&ycsb_mount).await?;
+        mount_fs(
+            &ycsb_mount,
+            &settings.device,
+            self.fs.clone(),
+            !self.is_same_experiment(last_experiment)?,
+            self.fs_mount_opts.clone(),
+        )
+        .await?;
 
         let marker_filename = final_results_dir.join("markers.csv");
         let mut marker_file = File::create(marker_filename).await?;
@@ -172,66 +173,10 @@ impl Bench for Ycsb {
             .write_all("time,marker_name\n".as_bytes())
             .await?;
 
-        let ycsb_mount_str = ycsb_mount.to_str().unwrap();
-        if let Err(err) = simple_command_with_output("umount", &[&settings.device]).await {
-            match &err {
-                CommandError::RunError { stderr, .. } => {
-                    if !stderr.contains(": not mounted.") {
-                        bail!(err);
-                    }
-                }
-                _ => {
-                    bail!(err);
-                }
-            }
-        }
-
-        if !self.is_same_experiment(last_experiment)? {
-            _ = simple_command_with_output("bash", &["-c", &self.fs.cmd(&settings.device)?])
-                .await?;
-            debug!("Created filesystem");
-        }
-        _ = simple_command_with_output("mount", &[&settings.device, ycsb_mount_str]).await?;
-
         #[cfg(feature = "prefill")]
-        if let Some(prefill) = &self.prefill {
-            use fio::*;
+        if let Some(size) = &self.prefill {
             let prefill_file = ycsb_mount.join("prefill.data");
-            if !prefill_file.exists() {
-                debug!("Creating prefill file");
-                let fio = Fio {
-                    test_type: FioTestTypeConfig {
-                        _type: FioTestType::Write,
-                        args: None,
-                    },
-                    request_sizes: vec!["4M".to_owned()],
-                    io_engines: vec!["io_uring".to_owned()],
-                    io_depths: vec![256],
-                    direct: true,
-                    time_based: false,
-                    runtime: None,
-                    ramp_time: None,
-                    size: Some(prefill.clone()),
-                    extra_options: None,
-                    num_jobs: None,
-                };
-
-                let bench_args: Box<dyn BenchArgs> = 'outer: {
-                    for item in &config.bench_args {
-                        if let Some(fio_args) = item.downcast_ref::<FioConfig>() {
-                            break 'outer Box::new(fio_args.clone());
-                        }
-                    }
-                    self.default_bench_args()
-                };
-                let mut prefill_settings = settings.clone();
-                prefill_settings.device = prefill_file.to_str().unwrap().to_owned();
-                prefill_settings.numa = None;
-                prefill_settings.nvme_power_states = None;
-                let (program, args) = fio.cmds(&prefill_settings, &*bench_args, "prefill")?;
-                let args = args[0].args.iter().map(|x| x.as_str()).collect::<Vec<_>>();
-                _ = simple_command_with_output(&program, &args).await?;
-            }
+            fio::Fio::prefill(&prefill_file, size, config, settings).await?;
         }
 
         let bench_args = 'inner: {
@@ -248,10 +193,9 @@ impl Bench for Ycsb {
             .downcast_ref::<YcsbConfig>()
             .context("Not valid Ycsb config")?;
 
-        let should_trace = self.trace.unwrap_or(false);
         let mut trace = None;
-        if should_trace {
-            trace.replace(trace_nvme_calls(&final_results_dir, &settings).await?);
+        if settings.should_trace.unwrap_or(false) {
+            trace.replace(trace_nvme_calls(final_results_dir).await?);
         }
 
         let child = Command::new(program)
@@ -263,7 +207,6 @@ impl Bench for Ycsb {
                 ycsb_mount.canonicalize().unwrap().to_str().unwrap()
             ))
             .current_dir(&ycsb_args.root_dir)
-            .envs(settings.env.as_ref().unwrap_or(&HashMap::new()))
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
@@ -309,13 +252,13 @@ impl Bench for Ycsb {
         sleep(Duration::from_secs(60)).await;
         debug!(
             "Disk sizes: {}",
-            simple_command_with_output("df", &["-h", &settings.device]).await?
+            simple_command_with_output_no_dir("df", &["-h", &settings.device]).await?
         );
 
         marker_file
             .write_all(format!("{},{}\n", start_time.elapsed().as_millis(), "unmount").as_bytes())
             .await?;
-        _ = simple_command_with_output("umount", &[&settings.device]).await?;
+        _ = simple_command_with_output_no_dir("umount", &[&settings.device]).await?;
 
         for sensor in sensors {
             sensor.send_async(SensorRequest::StopRecording).await?;

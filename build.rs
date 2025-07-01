@@ -11,31 +11,31 @@ fn process_components(
     workspace: &mut DocumentMut,
     component_type: &str,
 ) -> Result<()> {
-    let default_member = format!("{}/default-{}", component_type, component_type);
+    let default_member = format!("{component_type}/default-{component_type}");
     let members = workspace["workspace"]["members"]
         .as_array_mut()
         .context("Reading workspace members")?;
 
     members.retain(|m| {
         let member = m.as_str().unwrap();
-        !member.starts_with(&format!("{}/", component_type)) || member == default_member
+        !member.starts_with(&format!("{component_type}/")) || member == default_member
     });
 
-    let cargo_path = format!("{}/Cargo.toml", default_member);
-    println!("cargo:rerun-if-changed={}", cargo_path);
+    let cargo_path = format!("{default_member}/Cargo.toml");
+    println!("cargo:rerun-if-changed={cargo_path}");
     let mut cargo_doc = read_to_string(&cargo_path)?.parse::<DocumentMut>()?;
     let deps = cargo_doc["dependencies"]
         .as_table_mut()
         .context("Reading dependencies")?;
 
-    let pattern = Regex::new(&format!(r"^\.\./{}/", component_type))?;
+    let pattern = Regex::new(&format!(r"^\.\./{component_type}/"))?;
     deps.retain(|_, dep_item| {
-        if let Some(dep) = dep_item.as_inline_table() {
-            if let Some(path) = dep.get("path").and_then(|p| p.as_str()) {
-                if path.starts_with("../") && path.ne("../../macros") {
-                    return false;
-                }
-            }
+        if let Some(dep) = dep_item.as_inline_table()
+            && let Some(path) = dep.get("path").and_then(|p| p.as_str())
+            && path.starts_with("../")
+            && path.ne("../../macros")
+        {
+            return false;
         }
         true
     });
@@ -49,7 +49,7 @@ fn process_components(
         for item in items {
             let item_str = item.as_str().unwrap();
             let mut dep_table = table();
-            dep_table["path"] = value(format!("../{}", item_str));
+            dep_table["path"] = value(format!("../{item_str}"));
 
             if let Some(overrides) = config.get(item_str).and_then(|v| v.as_table()) {
                 for (k, v) in overrides.iter() {
@@ -101,7 +101,7 @@ fn main() -> Result<()> {
 
     for component in ITEMS {
         process_components(&config, &mut workspace_doc, component)
-            .context(format!("Processing {}", component))?;
+            .context(format!("Processing {component}"))?;
     }
 
     let app_path = Path::new("app/Cargo.toml");
@@ -111,9 +111,9 @@ fn main() -> Result<()> {
         .context("Reading app/Cargo.toml")?;
 
     for component in ITEMS {
-        let key = format!("default-{}", component);
+        let key = format!("default-{component}");
         let mut dep_table = table();
-        dep_table["path"] = value(format!("../{}/default-{}", component, component));
+        dep_table["path"] = value(format!("../{component}/default-{component}"));
 
         app_deps.insert(
             &key,

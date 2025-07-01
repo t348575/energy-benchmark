@@ -9,7 +9,7 @@ colors = ['#0173b2', '#de8f05', '#029e73', '#d55e00', '#cc78bc', '#ca9161', '#fb
 # TODO: fetch these
 power_states = ['ps0 (8.5W)', 'ps1 (4.5W)', 'ps2 (3.2W)']
 
-agg_options = {
+nvme_trace_agg_options = {
     'count': 'sum',
     'function': 'first',
     'is_nvme_call': 'first',

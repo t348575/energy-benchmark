@@ -7,10 +7,10 @@ use std::{
 };
 
 use common::{
-    bench::{Bench, BenchArgs, Cmd, trace_nvme_calls},
+    bench::{Bench, BenchArgs, Cmd, CmdsResult, trace_nvme_calls},
     config::{Config, Settings},
     sensor::SensorRequest,
-    util::{CommandError, Filesystem, read_until_prompt, simple_command_with_output},
+    util::{Filesystem, mount_fs, read_until_prompt, simple_command_with_output_no_dir},
 };
 use eyre::{Context, ContextCompat, Result, bail};
 use flume::Sender;
@@ -18,7 +18,7 @@ use itertools::iproduct;
 use result::{FilebenchSummary, parse_output};
 use serde::{Deserialize, Serialize};
 use tokio::{
-    fs::{File, create_dir_all, write},
+    fs::{File, write},
     io::{AsyncReadExt, AsyncWriteExt},
     join,
     process::Command,
@@ -36,7 +36,6 @@ pub struct Filebench {
     pub vars: Option<Vec<HashMap<String, String>>>,
     pub runtime: usize,
     pub fs: Vec<Filesystem>,
-    pub trace: Option<bool>,
     #[cfg(feature = "prefill")]
     pub prefill: Option<String>,
 }
@@ -80,7 +79,7 @@ impl Bench for Filebench {
         settings: &Settings,
         bench_args: &dyn BenchArgs,
         _name: &str,
-    ) -> Result<(String, Vec<Cmd>)> {
+    ) -> Result<CmdsResult> {
         let vars = self.vars.clone();
         let vars_vec = vars.unwrap_or(vec![HashMap::new()]);
 
@@ -100,7 +99,6 @@ impl Bench for Filebench {
                 vars: Some(vec![vars]),
                 runtime: self.runtime,
                 fs: vec![fs],
-                trace: self.trace.clone(),
                 #[cfg(feature = "prefill")]
                 prefill: self.prefill.clone(),
             })
@@ -129,18 +127,12 @@ impl Bench for Filebench {
                 Cmd {
                     args,
                     hash,
-                    arg_obj: Box::new(bench),
+                    bench_obj: Box::new(bench),
                 }
             })
             .collect();
 
-        Ok((program, cmds))
-    }
-
-    fn add_path_args(&self, _args: &mut Vec<String>, _results_dir: &Path) {}
-
-    async fn check_results(&self, _results_path: &Path, _dirs: &[String]) -> Result<Vec<usize>> {
-        Ok(vec![])
+        Ok(CmdsResult { program, cmds })
     }
 
     async fn run(
@@ -151,11 +143,10 @@ impl Bench for Filebench {
         sensors: &[Sender<SensorRequest>],
         final_results_dir: &Path,
         bench_obj: Box<dyn Bench>,
-        _config: &Config,
+        config: &Config,
         last_experiment: &Option<Box<dyn Bench>>,
     ) -> Result<()> {
         let filebench_mount = final_results_dir.join("filebench-mount");
-        _ = create_dir_all(&filebench_mount).await?;
 
         let marker_filename = final_results_dir.join("markers.csv");
         let mut marker_file = File::create(marker_filename).await?;
@@ -165,69 +156,25 @@ impl Bench for Filebench {
 
         let filebench_mount_str = filebench_mount.to_str().unwrap();
 
-        if let Err(err) = simple_command_with_output("umount", &[&settings.device]).await {
-            match &err {
-                CommandError::RunError { stderr, .. } => {
-                    if !stderr.contains(": not mounted.") {
-                        bail!(err);
-                    }
-                }
-                _ => {
-                    bail!(err);
-                }
-            }
-        }
-
-        if !self.fs.is_empty() && !last_experiment_uses_same_fs(last_experiment, &self.fs[0])? {
-            _ = simple_command_with_output("bash", &["-c", &self.fs[0].cmd(&settings.device)?])
-                .await?;
-        }
-        _ = simple_command_with_output("mount", &[&settings.device, filebench_mount_str]).await?;
+        let should_format =
+            !self.fs.is_empty() && !last_experiment_uses_same_fs(last_experiment, &self.fs[0])?;
+        mount_fs(
+            &filebench_mount,
+            &settings.device,
+            self.fs[0].clone(),
+            should_format,
+            None::<String>,
+        )
+        .await?;
 
         #[cfg(feature = "prefill")]
-        if let Some(prefill) = &self.prefill {
-            use fio::*;
+        if let Some(size) = &self.prefill {
             let prefill_file = filebench_mount.join("prefill.data");
-            if !prefill_file.exists() {
-                debug!("Creating prefill file");
-                let fio = Fio {
-                    test_type: FioTestTypeConfig {
-                        _type: FioTestType::Write,
-                        args: None,
-                    },
-                    request_sizes: vec!["4M".to_owned()],
-                    io_engines: vec!["io_uring".to_owned()],
-                    io_depths: vec![256],
-                    direct: true,
-                    time_based: false,
-                    runtime: None,
-                    ramp_time: None,
-                    size: Some(prefill.clone()),
-                    extra_options: None,
-                    num_jobs: None,
-                };
-
-                let bench_args: Box<dyn BenchArgs> = 'outer: {
-                    for item in &_config.bench_args {
-                        if let Some(fio_args) = item.downcast_ref::<FioConfig>() {
-                            break 'outer Box::new(fio_args.clone());
-                        }
-                    }
-                    self.default_bench_args()
-                };
-                let mut prefill_settings = settings.clone();
-                prefill_settings.device = prefill_file.to_str().unwrap().to_owned();
-                prefill_settings.numa = None;
-                prefill_settings.nvme_power_states = None;
-                let (program, args) = fio.cmds(&prefill_settings, &*bench_args, "prefill")?;
-                let args = args[0].args.iter().map(|x| x.as_str()).collect::<Vec<_>>();
-                _ = simple_command_with_output(&program, &args).await?;
-            }
+            fio::Fio::prefill(&prefill_file, size, config, settings).await?;
         }
 
         let mut filebench = Command::new(program)
             .args(args)
-            .envs(settings.env.as_ref().unwrap_or(&HashMap::new()))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -242,10 +189,9 @@ impl Bench for Filebench {
         let mut stdout = Pin::new(&mut filebench_stdout);
         let stderr = Pin::new(&mut filebench_stderr);
 
-        let should_trace = self.trace.unwrap_or(false);
         let mut trace = None;
-        if should_trace {
-            trace.replace(trace_nvme_calls(&final_results_dir, &settings).await?);
+        if settings.should_trace.unwrap_or(false) {
+            trace.replace(trace_nvme_calls(final_results_dir).await?);
         }
 
         read_until_prompt(&mut stdout, FILEBENCH_PROMPT).await?;
@@ -338,13 +284,13 @@ impl Bench for Filebench {
         sleep(Duration::from_secs(60)).await;
         debug!(
             "Disk sizes: {}",
-            simple_command_with_output("df", &["-h", &settings.device]).await?
+            simple_command_with_output_no_dir("df", &["-h", &settings.device]).await?
         );
 
         marker_file
             .write_all(format!("{},{}\n", start_time.elapsed().as_millis(), "unmount").as_bytes())
             .await?;
-        _ = simple_command_with_output("umount", &[&settings.device]).await?;
+        _ = simple_command_with_output_no_dir("umount", &[&settings.device]).await?;
 
         for sensor in sensors {
             sensor.send_async(SensorRequest::StopRecording).await?;

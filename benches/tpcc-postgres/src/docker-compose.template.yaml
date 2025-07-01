@@ -1,0 +1,38 @@
+services:
+  postgres:
+    container_name: postgres
+    hostname: postgres
+    image: postgres:16-bullseye
+    volumes:
+      - ./mountpoint/data:/var/lib/postgresql/data
+      {{#if config_file}}
+      - {{config_file}}:/etc/postgresql/postgresql.conf
+      {{/if}}
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: benchbase
+    networks:
+      - tpcc
+
+  tpcc-host:
+    container_name: tpcc-host
+    image: tpcc-host:latest
+    volumes:
+      - {{tpcc_postgres}}/target:/target
+      - {{benchhelpers}}:/benchhelpers
+      - ./hosts:/hosts
+      - ./logs:/root/tpcc_logs
+    networks:
+      - tpcc
+
+{{#each clients}}
+  {{this}}:
+    container_name: {{this}}
+    image: tpcc-client:latest
+    networks:
+      - tpcc
+{{/each}}
+
+networks:
+  tpcc:

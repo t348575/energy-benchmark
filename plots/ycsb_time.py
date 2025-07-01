@@ -6,8 +6,8 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-def plotter(data, marker_data, filepath, label, offset, trim):
-    fig, ax = plt.subplots(figsize=(12, 6.5))
+def plotter(data, marker_data, filepath, label, offset, trim, width=256):
+    fig, ax = plt.subplots(figsize=(width, 6.5))
     ax.plot(data[0], data[1], color=common.colors[0], label=label)
     ax.set_ylabel(label)
     ax.tick_params(axis="y")
@@ -20,13 +20,13 @@ def plotter(data, marker_data, filepath, label, offset, trim):
                 ax.axvline((row["time"] - offset) / 1000, color=common.colors[idx + 1], label=row["marker_name"], linestyle="dashdot")
 
     plt.legend()
-    plt.title(f"Time")
+    plt.title(f"RocksDB workload A")
     plt.tight_layout()
     plt.savefig(filepath, format="pdf")
     plt.close()
 
 def double_axis(data, left_axis, marker_data, filepath, label, label_left, offset, trim, title):
-    fig, ax1 = plt.subplots(figsize=(12, 6.5))
+    fig, ax1 = plt.subplots(figsize=(256, 6.5))
     ax1.plot(data[0], data[1], color=common.colors[0], label=label)
     ax1.set_ylabel(label)
     ax1.tick_params(axis="y")
@@ -58,7 +58,7 @@ def calculate_energy(df, time="time", power="Total"):
     avg_power = (df[power][:-1].values + df[power][1:].values) / 2
     return (avg_power * dt).sum()
 
-def gen_plots(plot_dir, results_dir, name, offset=0, trim=0):
+def gen_plots(plot_dir, results_dir, name, offset=0, trim=0, width=256):
     ps3 = pd.read_csv(os.path.join(results_dir, "powersensor3.csv"), dtype="float32")
     rapl = pd.read_csv(os.path.join(results_dir, "rapl.csv"), dtype="float32")
     sysinfo = pd.read_csv(os.path.join(results_dir, "sysinfo.csv"), dtype="float32")
@@ -80,7 +80,7 @@ def gen_plots(plot_dir, results_dir, name, offset=0, trim=0):
     trim_from_end = orig_rows - trim
     if os.path.exists(trace_file):
         trace_data = pd.read_csv(trace_file)
-        trace_data_all = trace_data.groupby(["time"], as_index=False).agg(common.agg_options)
+        trace_data_all = trace_data.groupby(["time"], as_index=False).agg(common.nvme_trace_agg_options)
         trace_data_all = common.offset_trace_time(trace_data_all, results_dir)
 
         if len(trace_data_all[trace_data_all["function"] == "read+76"]) > 0:
@@ -88,7 +88,7 @@ def gen_plots(plot_dir, results_dir, name, offset=0, trim=0):
             if len (trace_data_read) > 0:
                 trace_graphs.append([trace_data_read["time"], trace_data_read["count"], "read I/O"])
         elif len(trace_data[trace_data["vfs_read"] == True]) > 0:
-            trace_data_read = trace_data[trace_data["vfs_read"] == True].groupby(["time"], as_index=False).agg(common.agg_options)
+            trace_data_read = trace_data[trace_data["vfs_read"] == True].groupby(["time"], as_index=False).agg(common.nvme_trace_agg_options)
             trace_data_read = trace_data_read[trace_data_read["is_nvme_call"] == True]
             if len(trace_data_read) > 0:
                 trace_data_read = common.offset_trace_time(trace_data_read, results_dir)
@@ -99,17 +99,16 @@ def gen_plots(plot_dir, results_dir, name, offset=0, trim=0):
         if len(trace_data_all[trace_data_all["function"] == "__write+79"]) > 0:
             trace_data_write = common.fill_clean(trace_data_all[trace_data_all["function"] == "__write+79"], fillmode="spread1000", offset=offset, trim=trim_from_end)
         elif len(trace_data[(trace_data["vfs_write"] == True) & (trace_data["is_nvme_call"] == True)]) > 0:
-            print("write")
-            trace_data_write = trace_data[trace_data["vfs_write"] == True].groupby(["time"], as_index=False).agg(common.agg_options)
+            trace_data_write = trace_data[trace_data["vfs_write"] == True].groupby(["time"], as_index=False).agg(common.nvme_trace_agg_options)
             trace_data_write = common.offset_trace_time(trace_data_write, results_dir)
             trace_data_write = common.fill_clean(trace_data_write[trace_data_write["is_nvme_call"] == True], fillmode="spread1000", offset=offset, trim=trim_from_end)
 
         if trace_data_write is not None:
             trace_graphs.append([trace_data_write["time"], trace_data_write["count"], "write I/O"])
 
-        trace_data_fs_writepage = trace_data[trace_data["has_fs_pagewrite"] == True].groupby(["time"], as_index=False).agg(common.agg_options)
-        trace_data_requeued_io = trace_data[trace_data["requeued_io"] == True].groupby(["time"], as_index=False).agg(common.agg_options)
-        trace_data_vfs_fsync = trace_data[trace_data["vfs_fsync"] == True].groupby(["time"], as_index=False).agg(common.agg_options)
+        trace_data_fs_writepage = trace_data[trace_data["has_fs_pagewrite"] == True].groupby(["time"], as_index=False).agg(common.nvme_trace_agg_options)
+        trace_data_requeued_io = trace_data[trace_data["requeued_io"] == True].groupby(["time"], as_index=False).agg(common.nvme_trace_agg_options)
+        trace_data_vfs_fsync = trace_data[trace_data["vfs_fsync"] == True].groupby(["time"], as_index=False).agg(common.nvme_trace_agg_options)
 
         trace_data_fs_writepage = common.offset_trace_time(trace_data_fs_writepage, results_dir)
         trace_data_fs_writepage = common.fill_clean(trace_data_fs_writepage, fillmode="spread1000", offset=offset, trim=trim_from_end)
@@ -136,7 +135,7 @@ def gen_plots(plot_dir, results_dir, name, offset=0, trim=0):
     ps3 = common.fill_clean(ps3, offset=offset, trim=trim_from_end)
     rapl = common.fill_clean(rapl, offset=offset, trim=trim_from_end)
     sysinfo = common.fill_clean(sysinfo, offset=offset, trim=trim_from_end)
-    diskstat = common.fill_clean(diskstat, fillmode="0s", offset=offset, trim=trim_from_end)
+    diskstat = common.fill_clean(diskstat, offset=offset, trim=trim_from_end)
 
     rapl = rapl[(rapl["Total"] < 300) & (rapl["Total"] >= 0)].copy()
     sysinfo["average_freq_node0"] = sysinfo[[f"cpu-{i}-freq" for i in range(10)]].max(axis=1)
@@ -152,9 +151,6 @@ def gen_plots(plot_dir, results_dir, name, offset=0, trim=0):
         window_length = 101
     ps3["total_smoothed"] = savgol_filter(ps3["Total"], window_length=window_length, polyorder=3)
     rapl["total_smoothed"] = savgol_filter(rapl["Total"], window_length=window_length, polyorder=3)
-    diskstat["total_smoothed"] = savgol_filter(diskstat["total"], window_length=window_length, polyorder=3)
-    diskstat["read_smoothed"] = savgol_filter(diskstat["read"], window_length=window_length, polyorder=3)
-    diskstat["write_smoothed"] = savgol_filter(diskstat["write"], window_length=window_length, polyorder=3)
 
     sysinfo["average_freq_node0"] = sysinfo.loc[:, "cpu-0-freq":"cpu-9-freq"].max(axis=1)
     sysinfo["average_freq_node1"] = sysinfo.loc[:, "cpu-9-freq":"cpu-19-freq"].max(axis=1)
@@ -165,17 +161,17 @@ def gen_plots(plot_dir, results_dir, name, offset=0, trim=0):
     base = os.path.join(plot_dir, name)
     os.makedirs(base, exist_ok=True)
     if trace_data_all is not None:
-        double_axis([diskstat["time"], diskstat["total_smoothed"]], trace_graphs, marker_data, os.path.join(base, f"{name}-trace.pdf"),
+        double_axis([diskstat["time"], diskstat["total"]], trace_graphs, marker_data, os.path.join(base, f"{name}-trace.pdf"),
                     "Total throughput (MiB/s)", "Num. function calls", offset, trim_from_end, "Throughput & function traces vs. Time")
-    plotter([ps3["time"], ps3["total_smoothed"]], marker_data, os.path.join(base, f"{name}-ssd-power.pdf"), "SSD power (Watts)", offset, trim_from_end)
-    plotter([rapl["time"], rapl["total_smoothed"]], marker_data, os.path.join(base, f"{name}-cpu-power.pdf"), "CPU power (Watts)", offset, trim_from_end)
-    plotter([diskstat["time"], diskstat["total_smoothed"]], marker_data, os.path.join(base, f"{name}-diskstat.pdf"), "Iostat throughput (MiB/s)", offset, trim_from_end)
-    plotter([diskstat["time"], diskstat["read_smoothed"]], marker_data, os.path.join(base, f"{name}-read-diskstat.pdf"), "Iostat throughput (MiB/s)", offset, trim_from_end)
-    plotter([diskstat["time"], diskstat["write_smoothed"]], marker_data, os.path.join(base, f"{name}-write-diskstat.pdf"), "Iostat throughput (MiB/s)", offset, trim_from_end)
-    plotter([sysinfo["time"], sysinfo["average_freq_node0"]], marker_data, os.path.join(base, f"{name}-cpu-freq-0.pdf"), "CPU frequency (MHz)", offset, trim_from_end)
-    plotter([sysinfo["time"], sysinfo["average_load_node0"]], marker_data, os.path.join(base, f"{name}-cpu-load-0.pdf"), "CPU load", offset, trim_from_end)
-    plotter([sysinfo["time"], sysinfo["average_freq_node1"]], marker_data, os.path.join(base, f"{name}-cpu-freq-1.pdf"), "CPU frequency (MHz)", offset, trim_from_end)
-    plotter([sysinfo["time"], sysinfo["average_load_node1"]], marker_data, os.path.join(base, f"{name}-cpu-load-1.pdf"), "CPU load", offset, trim_from_end)
+    plotter([ps3["time"], ps3["total_smoothed"]], marker_data, os.path.join(base, f"{name}-ssd-power.pdf"), "SSD power (Watts)", offset, trim_from_end, width)
+    plotter([rapl["time"], rapl["total_smoothed"]], marker_data, os.path.join(base, f"{name}-cpu-power.pdf"), "CPU power (Watts)", offset, trim_from_end, width)
+    plotter([diskstat["time"], diskstat["total"]], marker_data, os.path.join(base, f"{name}-diskstat.pdf"), "Iostat throughput (MiB/s)", offset, trim_from_end, width)
+    plotter([diskstat["time"], diskstat["read"]], marker_data, os.path.join(base, f"{name}-read-diskstat.pdf"), "Iostat throughput (MiB/s)", offset, trim_from_end, width)
+    plotter([diskstat["time"], diskstat["write"]], marker_data, os.path.join(base, f"{name}-write-diskstat.pdf"), "Iostat throughput (MiB/s)", offset, trim_from_end, width)
+    plotter([sysinfo["time"], sysinfo["average_freq_node0"]], marker_data, os.path.join(base, f"{name}-cpu-freq-0.pdf"), "CPU frequency (MHz)", offset, trim_from_end, width)
+    plotter([sysinfo["time"], sysinfo["average_load_node0"]], marker_data, os.path.join(base, f"{name}-cpu-load-0.pdf"), "CPU load", offset, trim_from_end, width)
+    plotter([sysinfo["time"], sysinfo["average_freq_node1"]], marker_data, os.path.join(base, f"{name}-cpu-freq-1.pdf"), "CPU frequency (MHz)", offset, trim_from_end, width)
+    plotter([sysinfo["time"], sysinfo["average_load_node1"]], marker_data, os.path.join(base, f"{name}-cpu-load-1.pdf"), "CPU load", offset, trim_from_end, width)
 
     benchmark_values = {}
     benchmark_value_items = [
@@ -227,6 +223,7 @@ if __name__ == "__main__":
     parser.add_argument("--name", type=str, required=True)
     parser.add_argument("--offset", type=int, required=False, default=0)
     parser.add_argument("--trim_end", type=int, required=False, default=0)
+    parser.add_argument("--width", type=int, required=False, default=256)
     args = parser.parse_args()
 
-    gen_plots(args.plot_dir, args.results_dir, args.name, args.offset, args.trim_end)
+    gen_plots(args.plot_dir, args.results_dir, args.name, args.offset, args.trim_end, args.width)

@@ -82,10 +82,10 @@ async fn init_sysinfo(_: SysinfoConfig) -> Result<(Arc<Mutex<System>>, Vec<Strin
 
     let num_cpus = sys.cpus().len();
     let cpu_names = (0..num_cpus)
-        .map(|x| format!("cpu-{}-freq", x))
+        .map(|x| format!("cpu-{x}-freq"))
         .collect::<Vec<_>>();
     let load_names = (0..num_cpus)
-        .map(|x| format!("cpu-{}-load", x))
+        .map(|x| format!("cpu-{x}-load"))
         .collect::<Vec<_>>();
 
     Ok((
@@ -130,11 +130,11 @@ async fn read_sysinfo(
             false,
             ProcessRefreshKind::nothing().with_cpu().with_memory(),
         );
-        let fio = sys.process(Pid::from_u32(pid)).unwrap();
-        let fio_cpu = fio.cpu_usage();
-        let fio_mem = fio.memory();
+        let target_process = sys.process(Pid::from_u32(pid)).unwrap();
+        let target_process_cpu = target_process.cpu_usage();
+        let target_process_mem = target_process.memory();
         drop(sys);
-        (cpu_freq, load, mem, fio_cpu, fio_mem)
+        (cpu_freq, load, mem, target_process_cpu, target_process_mem)
     })
     .await?;
 

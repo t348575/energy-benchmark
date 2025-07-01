@@ -15,7 +15,7 @@ def gen_plots(data, filepath, x_label_name, experiment_name, labels, name=""):
             s = x
         else:
             s = x + width
-        ax.bar(s, data[0], width, label=common.power_states[i])
+        ax.bar(s, data[i], width, label=common.power_states[i])
 
     ax.set_ylabel("Latency (ms)")
     ax.set_xlabel(f"{x_label_name} {experiment_name}")

@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -26,7 +24,7 @@ pub struct Settings {
     pub nvme_power_states: Option<Vec<usize>>,
     pub nvme_cli_device: Option<String>,
     pub max_repeat: Option<usize>,
-    pub env: Option<HashMap<String, String>>,
+    pub should_trace: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

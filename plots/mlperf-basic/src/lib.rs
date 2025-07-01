@@ -8,35 +8,35 @@ use common::{
     bench::BenchmarkInfo,
     config::{Config, Settings},
     plot::{Plot, PlotType},
-    util::{
-        SectionStats, calculate_sectioned, parse_trace, plot_python, power_energy_calculator,
-        write_csv,
-    },
+    util::{SectionStats, calculate_sectioned, plot_python, power_energy_calculator},
 };
 use eyre::{Context, ContextCompat, Result};
 use futures::future::join_all;
 use itertools::Itertools;
+use mlperf::{
+    Mlperf,
+    result::{MlperfMetrics, find_summary},
+};
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
 use tokio::fs::{create_dir_all, read_to_string};
 use tracing::debug;
-use ycsb::{Ycsb, result::YcsbMetrics};
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
-pub struct YcsbBasic;
+pub struct MlperfBasic;
 
 #[derive(Debug, Clone)]
 struct PlotEntry {
-    result: YcsbMetrics,
+    result: MlperfMetrics,
     info: BenchmarkInfo,
-    args: Ycsb,
-    ssd_power: SectionedCalculation,
-    cpu_power: SectionedCalculation,
+    args: Mlperf,
+    ssd_power: SectionStats,
+    cpu_power: SectionStats,
 }
 
 #[async_trait::async_trait]
 #[typetag::serde]
-impl Plot for YcsbBasic {
+impl Plot for MlperfBasic {
     fn required_sensors(&self) -> &'static [&'static str] {
         &["Powersensor3", "Rapl"]
     }
@@ -71,9 +71,11 @@ impl Plot for YcsbBasic {
             return Ok(());
         }
 
-        async fn read_results_json(folder: PathBuf) -> Result<YcsbMetrics> {
-            let data = read_to_string(folder.join("results.json")).await?;
-            serde_json::from_str(&data).context("Parse results.json")
+        async fn read_results_json(folder: PathBuf) -> Result<MlperfMetrics> {
+            let summary_file_path =
+                find_summary(&folder.join("training")).context("Could not find summary.json")?;
+            let data = read_to_string(summary_file_path).await?;
+            serde_json::from_str(&data).context("Parse summary.json")
         }
 
         let entries = groups
@@ -85,7 +87,6 @@ impl Plot for YcsbBasic {
                         read_results_json(data_path.join(folder.clone())).await,
                         read_to_string(specific_data_path.join("powersensor3.csv")).await,
                         read_to_string(specific_data_path.join("rapl.csv")).await,
-                        read_to_string(specific_data_path.join("markers.csv")).await,
                         folder,
                         info,
                     )
@@ -97,13 +98,12 @@ impl Plot for YcsbBasic {
         let ready_entries = entries
             .into_par_iter()
             .map(|item| {
-                let (json, powersensor3, rapl, markers, _dir, info) = item;
-                let markers = markers.context("Read markers").unwrap();
+                let (json, powersensor3, rapl, _dir, info) = item;
                 let rapl = rapl.context("Read rapl").unwrap();
                 let powersensor3 = powersensor3.context("Read powersensor3").unwrap();
 
-                let (rapl_means, rapl_overall, _) = calculate_sectioned::<_, 2>(
-                    Some(&markers),
+                let (_, rapl_overall, _) = calculate_sectioned::<_, 0>(
+                    None,
                     &rapl,
                     "Total",
                     0.0,
@@ -112,8 +112,8 @@ impl Plot for YcsbBasic {
                 )
                 .context("Calculate rapl means")
                 .unwrap();
-                let (powersensor3_means, ps3_overall, _times) = calculate_sectioned::<_, 2>(
-                    Some(&markers),
+                let (_, ps3_overall, _times) = calculate_sectioned::<_, 0>(
+                    None,
                     &powersensor3,
                     "Total",
                     0.0,
@@ -125,73 +125,49 @@ impl Plot for YcsbBasic {
 
                 PlotEntry {
                     result: json.context("Read results json").unwrap(),
-                    args: info.args.downcast_ref::<Ycsb>().unwrap().clone(),
+                    args: info.args.downcast_ref::<Mlperf>().unwrap().clone(),
                     info,
-                    ssd_power: SectionedCalculation {
-                        overall: ps3_overall,
-                        benchmark: powersensor3_means[0],
-                        unmount: powersensor3_means[1],
-                    },
-                    cpu_power: SectionedCalculation {
-                        overall: rapl_overall,
-                        benchmark: rapl_means[0],
-                        unmount: rapl_means[1],
-                    },
+                    ssd_power: ps3_overall,
+                    cpu_power: rapl_overall,
                 }
             })
             .collect::<Vec<_>>();
 
         let experiment_name = ready_entries[0].info.name.clone();
-        let iops_dir = plot_path.join("iops");
-        create_dir_all(&iops_dir).await?;
+        let throughput_dir = plot_path.join("throughput");
+        create_dir_all(&throughput_dir).await?;
+        // self.bar_plot(
+        //     ready_entries.clone(),
+        //     settings,
+        //     throughput_dir.join(format!("{experiment_name}-checkpoint.pdf")),
+        //     "throughput",
+        //     "MB/s",
+        //     |data| data.result.metric.save_checkpoint_io_mean_gb_per_second * 1000.0,
+        // )?;
+
         self.bar_plot(
             ready_entries.clone(),
             settings,
-            iops_dir.join(format!("{experiment_name}.pdf")),
+            throughput_dir.join(format!("{experiment_name}-train.pdf")),
             "throughput",
-            "kOPS/s",
-            |data| data.result.throughput_ops_sec.as_ref().map(|x| x / 1000.0),
-        )?;
-
-        let latency_dir = plot_path.join("latency");
-        self.bar_plot(
-            ready_entries.clone(),
-            settings,
-            latency_dir.join(format!("{experiment_name}-read.pdf")),
-            "latency",
-            "ms",
-            |data| data.result.read.as_ref().map(|x| x.p99_latency_us / 1000.0),
+            "MB/s",
+            |data| data.result.metric.train_io_mean_mb_per_second,
         )?;
         self.bar_plot(
             ready_entries.clone(),
             settings,
-            latency_dir.join(format!("{experiment_name}-update.pdf")),
-            "latency",
-            "ms",
-            |data| {
-                data.result
-                    .update
-                    .as_ref()
-                    .map(|x| x.p99_latency_us / 1000.0)
-            },
-        )?;
-
-        let power_dir = plot_path.join("power");
-        self.bar_plot(
-            ready_entries.clone(),
-            settings,
-            power_dir.join(format!("{experiment_name}-cpu.pdf")),
-            "power",
-            "W",
-            |data| data.cpu_power.benchmark.power,
+            throughput_dir.join(format!("{experiment_name}-samples.pdf")),
+            "throughput",
+            "samples/s",
+            |data| data.result.metric.train_throughput_mean_samples_per_second,
         )?;
         self.bar_plot(
             ready_entries.clone(),
             settings,
-            power_dir.join(format!("{experiment_name}-ssd.pdf")),
-            "power",
-            "W",
-            |data| data.ssd_power.benchmark.power,
+            throughput_dir.join(format!("{experiment_name}-utilization.pdf")),
+            "throughput",
+            "%",
+            |data| data.result.metric.train_au_mean_percentage,
         )?;
 
         let efficiency_dir = plot_path.join("efficiency");
@@ -202,7 +178,7 @@ impl Plot for YcsbBasic {
     }
 }
 
-impl YcsbBasic {
+impl MlperfBasic {
     fn bar_plot(
         &self,
         ready_entries: Vec<PlotEntry>,
@@ -210,25 +186,16 @@ impl YcsbBasic {
         filepath: PathBuf,
         plotting_file: &str,
         x_label: &str,
-        get_value: fn(&PlotEntry) -> Option<f64>,
+        get_value: fn(&PlotEntry) -> f64,
     ) -> Result<()> {
         let num_power_states = settings.nvme_power_states.clone().unwrap_or(vec![0]).len();
         let mut results = vec![vec![]; num_power_states];
-        let vars = ready_entries
-            .iter()
-            .map(|x| format!("{:?}", x.args._ycsb_op_type.as_ref().unwrap()))
-            .collect::<HashSet<_>>();
-        let data = vars.into_iter().sorted();
-        let order: HashMap<String, usize> = data.clone().enumerate().map(|(x, y)| (y, x)).collect();
-        let labels: Vec<String> = data.map(|x| x.to_string()).collect();
+        let (order, labels) = self.get_order_labels(ready_entries.clone());
 
         let experiment_name = ready_entries[0].info.name.clone();
 
         for item in ready_entries {
-            let mean = match get_value(&item) {
-                Some(x) => x,
-                None => continue,
-            };
+            let mean = get_value(&item);
             let ps = if item.info.power_state == -1 {
                 0
             } else {
@@ -240,10 +207,7 @@ impl YcsbBasic {
         for item in results.iter_mut() {
             item.sort_by_key(|entry| {
                 order
-                    .get(&format!(
-                        "{:?}",
-                        entry.0.args._ycsb_op_type.as_ref().unwrap()
-                    ))
+                    .get(&format!("{}", entry.0.args.n_accelerators[0]))
                     .unwrap()
             });
         }
@@ -285,21 +249,17 @@ impl YcsbBasic {
     ) -> Result<()> {
         let num_power_states = settings.nvme_power_states.clone().unwrap_or(vec![0]).len();
         let (order, labels) = self.get_order_labels(ready_entries.clone());
-        let mut iops_j_overall = vec![vec![0f64; num_power_states]; order.len()];
-        let mut iops_j_benchmark = iops_j_overall.clone();
-        let mut iops_j_unmount = iops_j_overall.clone();
+        let mut iops_j = vec![vec![0f64; num_power_states]; order.len()];
+        let mut bytes_j = iops_j.clone();
         let experiment_name = ready_entries[0].info.name.clone();
 
         let results = ready_entries
             .par_iter()
             .map(|item| {
+                let ops = item.result.metric.train_throughput_mean_samples_per_second;
+                let throughput = item.result.metric.train_io_mean_mb_per_second;
                 let x = *order
-                    .get(&format!(
-                        "{:?} {} {:?}",
-                        item.args.fs,
-                        item.args.workload_file,
-                        item.args._ycsb_op_type.as_ref().unwrap()
-                    ))
+                    .get(&format!("{}", item.args.n_accelerators[0],))
                     .unwrap();
                 let y = if item.info.power_state == -1 {
                     0
@@ -307,27 +267,15 @@ impl YcsbBasic {
                     item.info.power_state
                 } as usize;
 
-                (
-                    x,
-                    y,
-                    item.result.throughput_ops_sec.as_ref().unwrap()
-                        / (item.ssd_power.overall.energy.unwrap()
-                            + item.cpu_power.overall.energy.unwrap()),
-                    item.result.throughput_ops_sec.as_ref().unwrap()
-                        / (item.ssd_power.benchmark.energy.unwrap()
-                            + item.cpu_power.benchmark.energy.unwrap()),
-                    item.result.throughput_ops_sec.as_ref().unwrap()
-                        / (item.ssd_power.unmount.energy.unwrap()
-                            + item.cpu_power.unmount.energy.unwrap()),
-                )
+                let power = item.ssd_power.power.unwrap() + item.cpu_power.power.unwrap();
+                (x, y, ops / power, throughput / power)
             })
             .collect::<Vec<_>>();
         for item in results {
             let x = item.0;
             let y = item.1;
-            iops_j_overall[x][y] = item.2;
-            iops_j_benchmark[x][y] = item.3;
-            iops_j_unmount[x][y] = item.4;
+            iops_j[x][y] = item.2;
+            bytes_j[x][y] = item.3;
         }
 
         let plot_data_dir = plot_path.join("plot_data");
@@ -350,24 +298,17 @@ impl YcsbBasic {
 
         let jobs = [
             (
-                plot_path.join(format!("{}-iops-j-overall.pdf", &experiment_name)),
-                iops_j_overall,
-                "IOPS/J",
+                plot_path.join(format!("{}-iops-j.pdf", &experiment_name)),
+                iops_j,
+                "Samples/J",
                 "overall",
                 false,
             ),
             (
-                plot_path.join(format!("{}-iops-j-benchmark.pdf", &experiment_name)),
-                iops_j_benchmark,
-                "IOPS/J",
-                "benchmark",
-                false,
-            ),
-            (
-                plot_path.join(format!("{}-iops-j-unmount.pdf", &experiment_name)),
-                iops_j_unmount,
-                "IOPS/J",
-                "unmount",
+                plot_path.join(format!("{}-bytes-j.pdf", &experiment_name)),
+                bytes_j,
+                "Bytes/J",
+                "overall",
                 false,
             ),
         ];
@@ -402,43 +343,28 @@ impl YcsbBasic {
     ) -> (HashMap<String, usize>, Vec<String>) {
         let vars = ready_entries
             .iter()
-            .map(|x| {
-                (
-                    &x.args.fs,
-                    x.args.workload_file.clone(),
-                    x.args._ycsb_op_type.clone(),
-                )
-            })
+            .map(|x| (&x.args.n_accelerators[0],))
             .collect::<HashSet<_>>();
-        let data = vars.into_iter().sorted_by(|a, b| {
-            let fs_cmp = a.0.ord().cmp(&b.0.ord());
-            if fs_cmp != std::cmp::Ordering::Equal {
-                fs_cmp
-            } else {
-                a.2.as_ref().unwrap().cmp(b.2.as_ref().unwrap())
-            }
-        });
+        let data = vars.into_iter().sorted_by(|a, b| a.0.cmp(b.0));
         let order: HashMap<String, usize> = data
             .clone()
-            .map(|x| format!("{:?} {} {:?}", x.0, x.1, x.2.as_ref().unwrap()))
+            .map(|x| format!("{}", x.0))
             .enumerate()
             .map(|(x, y)| (y, x))
             .collect();
-        let labels: Vec<String> = data
-            .map(|x| format!("{:?} {} {:?}", x.0, x.1, x.2.as_ref().unwrap()))
-            .collect();
+        let labels: Vec<String> = data.map(|x| format!("{}", x.0)).collect();
         (order, labels)
     }
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
-pub struct YcsbPowerTime {
+pub struct MlperfPowerTime {
     pub offset: Option<usize>,
 }
 
 #[async_trait::async_trait]
 #[typetag::serde]
-impl Plot for YcsbPowerTime {
+impl Plot for MlperfPowerTime {
     fn required_sensors(&self) -> &'static [&'static str] {
         &["Powersensor3", "Rapl", "Sysinfo"]
     }
@@ -467,13 +393,13 @@ impl Plot for YcsbPowerTime {
 
         let entries = groups.drain().map(|(_, x)| x).collect::<Vec<_>>();
 
-        let dir = plot_path.join("ycsb_time");
+        let dir = plot_path.join("mlperf_time");
         let inner_dir = dir.join(&entries[0].1.name);
         create_dir_all(&inner_dir).await?;
         create_dir_all(inner_dir.join("plot_data")).await?;
         let results = entries
             .into_iter()
-            .map(|data| self.ycsb_time(data_path.join(data.0.clone()), &inner_dir, &data.1))
+            .map(|data| self.mlperf_time(data_path.join(data.0.clone()), &inner_dir, &data.1))
             .collect::<Vec<_>>();
         for item in results {
             item?;
@@ -482,28 +408,21 @@ impl Plot for YcsbPowerTime {
     }
 }
 
-impl YcsbPowerTime {
-    fn ycsb_time(&self, data_path: PathBuf, plot_path: &Path, info: &BenchmarkInfo) -> Result<()> {
-        let config = info.args.downcast_ref::<Ycsb>().unwrap();
+impl MlperfPowerTime {
+    fn mlperf_time(
+        &self,
+        data_path: PathBuf,
+        plot_path: &Path,
+        info: &BenchmarkInfo,
+    ) -> Result<()> {
+        let config = info.args.downcast_ref::<Mlperf>().unwrap();
         let name = format!(
-            "{}-ps{}-{:?}-{:?}",
-            info.name,
-            info.power_state,
-            config._ycsb_op_type.as_ref().unwrap(),
-            config.fs
+            "{}-ps{}-{}",
+            info.name, info.power_state, config.n_accelerators[0]
         );
 
-        let trace_file = data_path.join("trace.out");
-        if trace_file.exists() {
-            let trace = parse_trace(&std::fs::read_to_string(&trace_file)?, &config.fs)?;
-            write_csv(
-                &plot_path.join("plot_data").join(format!("{name}.csv")),
-                &trace,
-            )?;
-        }
-
         let mut args = vec![
-            "plots/ycsb_time.py",
+            "plots/mlperf_time.py",
             "--plot_dir",
             plot_path.to_str().unwrap(),
             "--results_dir",
@@ -523,11 +442,4 @@ impl YcsbPowerTime {
         child.wait()?;
         Ok(())
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct SectionedCalculation {
-    pub overall: SectionStats,
-    pub benchmark: SectionStats,
-    pub unmount: SectionStats,
 }

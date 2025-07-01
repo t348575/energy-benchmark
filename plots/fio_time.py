@@ -28,7 +28,7 @@ def plotter(name, bw_log, left_axis, filepath, label_left):
     plt.savefig(filepath, format="pdf")
     plt.close()
 
-def gen_plots(plot_dir, results_dir, name):
+def gen_plots(plot_dir, results_dir, name, offset=0, trim_end=0):
     ps3 = pd.read_csv(os.path.join(results_dir, "powersensor3.csv"), dtype="float32")
     rapl = pd.read_csv(os.path.join(results_dir, "rapl.csv"), dtype="float32")
     sysinfo = pd.read_csv(os.path.join(results_dir, "sysinfo.csv"), dtype="float32")
@@ -62,11 +62,11 @@ def gen_plots(plot_dir, results_dir, name):
     summed_bw.columns = ["time", "bw"]
     bw_log = summed_bw.copy()
 
-    bw_log = common.fill_clean(bw_log)
-    ps3 = common.fill_clean(ps3, trim=5000)
-    rapl = common.fill_clean(rapl, trim=5000)
-    sysinfo = common.fill_clean(sysinfo, trim=5000)
-    diskstat = common.fill_clean(diskstat, trim=5000)
+    bw_log = common.fill_clean(bw_log, offset=offset, trim=trim_end)
+    ps3 = common.fill_clean(ps3, trim=trim_end, offset=offset)
+    rapl = common.fill_clean(rapl, trim=trim_end, offset=offset)
+    sysinfo = common.fill_clean(sysinfo, trim=trim_end, offset=offset)
+    diskstat = common.fill_clean(diskstat, trim=trim_end, offset=offset)
 
     rapl = rapl[(rapl["Total"] < 300) & (rapl["Total"] >= 0)].copy()
     bw_log = bw_log[(bw_log["bw"] < 4500) & (bw_log["bw"] >= 0)].copy()
@@ -123,6 +123,8 @@ if __name__ == "__main__":
     parser.add_argument("--plot_dir", type=str, required=True)
     parser.add_argument("--results_dir", type=str, required=True)
     parser.add_argument("--name", type=str, required=True)
+    parser.add_argument("--offset", type=int, required=False, default=0)
+    parser.add_argument("--trim_end", type=int, required=False, default=0)
     args = parser.parse_args()
 
-    gen_plots(args.plot_dir, args.results_dir, args.name)
+    gen_plots(args.plot_dir, args.results_dir, args.name, args.offset, args.trim_end)

@@ -106,7 +106,7 @@ impl Plot for FilebenchBasic {
                 let powersensor3 = powersensor3.context("Read powersensor3").unwrap();
 
                 let (rapl_means, rapl_overall, _) = calculate_sectioned::<_, 3>(
-                    &markers,
+                    Some(&markers),
                     &rapl,
                     "Total",
                     0.0,
@@ -116,7 +116,7 @@ impl Plot for FilebenchBasic {
                 .context("Calculate rapl means")
                 .unwrap();
                 let (powersensor3_means, ps3_overall, times) = calculate_sectioned::<_, 3>(
-                    &markers,
+                    Some(&markers),
                     &powersensor3,
                     "Total",
                     0.0,
@@ -153,7 +153,7 @@ impl Plot for FilebenchBasic {
         self.bar_plot(
             ready_entries.clone(),
             settings,
-            throughput_dir.join(format!("{}-read.pdf", experiment_name)),
+            throughput_dir.join(format!("{experiment_name}-read.pdf")),
             "throughput",
             None,
             "",
@@ -170,7 +170,7 @@ impl Plot for FilebenchBasic {
         self.bar_plot(
             ready_entries.clone(),
             settings,
-            throughput_dir.join(format!("{}-write.pdf", experiment_name)),
+            throughput_dir.join(format!("{experiment_name}-write.pdf")),
             "throughput",
             None,
             "",
@@ -194,7 +194,7 @@ impl Plot for FilebenchBasic {
         self.bar_plot(
             ready_entries.clone(),
             settings,
-            iops_dir.join(format!("{}.pdf", experiment_name)),
+            iops_dir.join(format!("{experiment_name}.pdf")),
             "throughput",
             None,
             "kOPS/s",
@@ -205,7 +205,7 @@ impl Plot for FilebenchBasic {
         self.bar_plot(
             ready_entries.clone(),
             settings,
-            latency_dir.join(format!("{}.pdf", experiment_name)),
+            latency_dir.join(format!("{experiment_name}.pdf")),
             "latency",
             None,
             "ms",
@@ -216,7 +216,7 @@ impl Plot for FilebenchBasic {
         self.bar_plot(
             ready_entries.clone(),
             settings,
-            power_dir.join(format!("{}-overall.pdf", experiment_name)),
+            power_dir.join(format!("{experiment_name}-overall.pdf",)),
             "power",
             Some("CPU + DRAM"),
             "ms",
@@ -225,7 +225,7 @@ impl Plot for FilebenchBasic {
         self.bar_plot(
             ready_entries.clone(),
             settings,
-            power_dir.join(format!("{}-init.pdf", experiment_name)),
+            power_dir.join(format!("{experiment_name}-init.pdf",)),
             "power",
             Some("CPU + DRAM"),
             "ms",
@@ -234,7 +234,7 @@ impl Plot for FilebenchBasic {
         self.bar_plot(
             ready_entries.clone(),
             settings,
-            power_dir.join(format!("{}-benchmark.pdf", experiment_name)),
+            power_dir.join(format!("{experiment_name}-benchmark.pdf",)),
             "power",
             Some("CPU + DRAM"),
             "ms",
@@ -243,7 +243,7 @@ impl Plot for FilebenchBasic {
         self.bar_plot(
             ready_entries.clone(),
             settings,
-            power_dir.join(format!("{}-post-benchmark.pdf", experiment_name)),
+            power_dir.join(format!("{experiment_name}-post-benchmark.pdf",)),
             "power",
             Some("CPU + DRAM"),
             "ms",

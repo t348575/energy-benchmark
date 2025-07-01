@@ -16,9 +16,9 @@ features = ["prefill"] # activate a cargo feature for this benchmark
 3. Ensure all dependencies required for the benchmark runners, sensors & plotters are installed (check respective directories for README)
 4. Run `cargo build` (populates dependencies from setup.toml)
 5. Run `cargo build --release -p energy-benchmark` (built executable in `target/release/`)
-6. Setup a `config.yaml` benchmark configuration file as shown below, then run
-
-**Note**: Set the `RUST_LOG` environment variable to emit logs (debug, info, warn, error)
+6. Setup a `config.yaml` benchmark configuration file as shown below, then run using: `sudo target/release/energy-benchmark bench`
+**Note 1**: Always run the benchmark using sudo, and from the repository root.
+**Note 2**: Set the `RUST_LOG` environment variable to emit logs (debug, info, warn, error)
 
 ## Benchmark config
 For specific configuration options for each benchmark, sensor or plotter, check respective README.

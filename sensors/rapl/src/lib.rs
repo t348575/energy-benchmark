@@ -52,7 +52,7 @@ impl InternalRapl {
                 continue;
             }
             let cpu_index_str = &file_name_str[3..];
-            if cpu_index_str.is_empty() || !cpu_index_str.chars().all(|c| c.is_digit(10)) {
+            if cpu_index_str.is_empty() || !cpu_index_str.chars().all(|c| c.is_ascii_digit()) {
                 continue;
             }
 
@@ -169,8 +169,7 @@ async fn init_rapl(_: RaplConfig) -> Result<(Arc<Mutex<InternalRapl>>, Vec<Strin
     let mut sensor_names = sensor
         .packages
         .iter()
-        .map(|x| [format!("package-{}", x), format!("dram-{}", x)])
-        .flatten()
+        .flat_map(|x| [format!("package-{x}"), format!("dram-{x}")])
         .collect::<Vec<_>>();
     sensor_names.insert(0, "Total".to_owned());
     debug!("RAPL sensor initialized!");
@@ -205,13 +204,12 @@ async fn read_rapl(
     let mut readings = start
         .into_iter()
         .zip(end)
-        .map(|(start, end)| {
+        .flat_map(|(start, end)| {
             [
                 InternalRapl::watts(start.0, end.0, sensor_end_time),
                 InternalRapl::watts(start.1, end.1, sensor_end_time),
             ]
         })
-        .flatten()
         .collect::<Vec<_>>();
     readings.insert(0, readings.iter().sum());
     Ok(readings)

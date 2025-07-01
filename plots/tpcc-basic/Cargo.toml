@@ -1,5 +1,5 @@
 [package]
-name = "fio-bw-over-time"
+name = "tpcc-basic"
 version = "0.1.0"
 edition = "2024"
 
@@ -10,8 +10,9 @@ typetag.workspace = true
 eyre.workspace = true
 async-trait.workspace = true
 tokio.workspace = true
-fio = { path = "../../benches/fio" }
+tpcc-postgres = { path = "../../benches/tpcc-postgres" }
 serde_json.workspace = true
-itertools.workspace = true
 tracing.workspace = true
+itertools.workspace = true
+futures.workspace = true
 rayon.workspace = true

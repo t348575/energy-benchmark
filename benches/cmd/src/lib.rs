@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use common::{
-    bench::{Bench, BenchArgs},
+    bench::{Bench, BenchArgs, CmdsResult},
     config::Settings,
 };
 use eyre::Result;
@@ -47,23 +47,21 @@ impl Bench for Cmd {
         _settings: &Settings,
         _bench_args: &dyn BenchArgs,
         _name: &str,
-    ) -> Result<(String, Vec<common::bench::Cmd>)> {
+    ) -> Result<CmdsResult> {
         let args = self.args.clone().unwrap_or_default();
         let hash = format!("{:x}", md5::compute(args.join(" ")));
-        Ok((
-            self.program.clone(),
-            vec![common::bench::Cmd {
+        Ok(CmdsResult {
+            program: self.program.clone(),
+            cmds: vec![common::bench::Cmd {
                 args: args.clone(),
                 hash,
-                arg_obj: Box::new(Cmd {
+                bench_obj: Box::new(Cmd {
                     program: self.program.clone(),
                     args: Some(args),
                 }),
             }],
-        ))
+        })
     }
-
-    fn add_path_args(&self, _args: &mut Vec<String>, _results_dir: &Path) {}
 
     async fn check_results(&self, _results_path: &Path, _dirs: &[String]) -> Result<Vec<usize>> {
         Ok(vec![])

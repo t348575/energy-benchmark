@@ -1,6 +1,12 @@
 use std::{
-    collections::HashSet, fmt::Debug, hash::Hash, path::PathBuf, pin::Pin, process::Stdio,
-    string::FromUtf8Error, time::Instant,
+    collections::HashSet,
+    fmt::Debug,
+    hash::Hash,
+    path::{Path, PathBuf},
+    pin::Pin,
+    process::Stdio,
+    string::FromUtf8Error,
+    time::Instant,
 };
 
 use csv::{ReaderBuilder, StringRecord, Writer};
@@ -8,7 +14,7 @@ use eyre::{Context, ContextCompat, Result, bail};
 use flume::{Receiver, Sender};
 use serde::{Deserialize, Serialize};
 use tokio::{
-    fs::File,
+    fs::{File, create_dir_all},
     io::{AsyncReadExt, AsyncWriteExt},
     process::Command,
     spawn,
@@ -151,41 +157,41 @@ where
             last_time = read_time;
             read_time = Instant::now();
 
-            if !rx.is_empty() {
-                if let Ok(request) = rx.recv_async().await {
-                    match request {
-                        SensorRequest::StopRecording => {
-                            debug!("Stopping {} reader", args.name());
-                            is_running = false;
-                            let filename = dir.join(format!("{filename}.csv"));
-                            let mut file = File::create(filename).await?;
+            if !rx.is_empty()
+                && let Ok(request) = rx.recv_async().await
+            {
+                match request {
+                    SensorRequest::StopRecording => {
+                        debug!("Stopping {} reader", args.name());
+                        is_running = false;
+                        let filename = dir.join(format!("{filename}.csv"));
+                        let mut file = File::create(filename).await?;
 
-                            file.write_all(format!("time,{}\n", sensor_names.join(",")).as_bytes())
-                                .await?;
-                            for row in readings.drain(..) {
-                                file.write_all(
-                                    format!(
-                                        "{},{}\n",
-                                        row.0,
-                                        row.1
-                                            .into_iter()
-                                            .map(|x| x.to_string())
-                                            .collect::<Vec<_>>()
-                                            .join(",")
-                                    )
-                                    .as_bytes(),
+                        file.write_all(format!("time,{}\n", sensor_names.join(",")).as_bytes())
+                            .await?;
+                        for row in readings.drain(..) {
+                            file.write_all(
+                                format!(
+                                    "{},{}\n",
+                                    row.0,
+                                    row.1
+                                        .into_iter()
+                                        .map(|x| x.to_string())
+                                        .collect::<Vec<_>>()
+                                        .join(",")
                                 )
-                                .await?;
-                            }
-                            file.flush().await?;
-                            tx.send_async(SensorReply::FileDumpComplete).await?;
+                                .as_bytes(),
+                            )
+                            .await?;
                         }
-                        request => {
-                            warn!(
-                                "Got unexpected sensor request {request:#?} for {}",
-                                args.name()
-                            );
-                        }
+                        file.flush().await?;
+                        tx.send_async(SensorReply::FileDumpComplete).await?;
+                    }
+                    request => {
+                        warn!(
+                            "Got unexpected sensor request {request:#?} for {}",
+                            args.name()
+                        );
                     }
                 }
             }
@@ -196,6 +202,14 @@ where
 }
 
 pub fn plot_python(plot_file: &str, args: &[(&str, &str)]) -> Result<()> {
+    debug!(
+        "{plot_file} {}",
+        args.iter()
+            .map(|x| [x.0, x.1])
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" ")
+    );
     let mut child = std::process::Command::new("python3")
         .arg(format!("plots/{plot_file}.py"))
         .args(args.iter().flat_map(|(k, v)| [k, v]).collect::<Vec<_>>())
@@ -225,21 +239,19 @@ pub fn get_mean_power(data: &str, column: &str) -> Result<f64> {
 
     for line in data_lines {
         let cols: Vec<&str> = line.split(',').collect();
-        if let Some(value_str) = cols.get(total_column) {
-            if let Ok(value) = value_str.trim().parse::<f64>() {
-                if value.is_infinite() || value.is_nan() || value <= 0.0 || value > 300.0 {
-                    continue;
-                }
-            }
+        if let Some(value_str) = cols.get(total_column)
+            && let Ok(value) = value_str.trim().parse::<f64>()
+            && (value.is_infinite() || value.is_nan() || value <= 0.0 || value > 300.0)
+        {
+            continue;
         }
 
-        if let Some(value_str) = cols.get(selected_column) {
-            if let Ok(value) = value_str.trim().parse::<f64>() {
-                if value.is_finite() {
-                    total_sum += value;
-                    count += 1;
-                }
-            }
+        if let Some(value_str) = cols.get(selected_column)
+            && let Ok(value) = value_str.trim().parse::<f64>()
+            && value.is_finite()
+        {
+            total_sum += value;
+            count += 1;
         }
     }
 
@@ -267,11 +279,13 @@ pub enum CommandError {
 pub async fn simple_command_with_output(
     program: &str,
     args: &[&str],
+    dir: &Path,
 ) -> Result<String, CommandError> {
     let output = Command::new(program)
         .args(args)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
+        .current_dir(dir)
         .output()
         .await
         .map_err(CommandError::LaunchError)?;
@@ -283,7 +297,17 @@ pub async fn simple_command_with_output(
         });
     }
 
+    if output.stderr.len() > 0 {
+        info!("stderr: {}", String::from_utf8(output.stderr).unwrap());
+    }
     String::from_utf8(output.stdout).map_err(CommandError::StringParseError)
+}
+
+pub async fn simple_command_with_output_no_dir(
+    program: &str,
+    args: &[&str],
+) -> Result<String, CommandError> {
+    simple_command_with_output(program, args, &std::env::current_dir().unwrap()).await
 }
 
 #[derive(Debug, Default, Clone, PartialOrd, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -347,21 +371,27 @@ struct Marker {
 }
 
 pub fn calculate_sectioned<CalculatedData: Debug + Default + Copy, const N: usize>(
-    marker_csv: &str,
+    marker_csv: Option<&str>,
     csv_to_section: &str,
     column_name: &str,
     lower: f64,
     upper: f64,
-    calculator: fn(data: &[&(usize, f64)]) -> CalculatedData,
+    calculator: fn(data: &[(usize, f64)]) -> CalculatedData,
 ) -> Result<([CalculatedData; N], CalculatedData, [usize; N])> {
-    let mut marker_reader = ReaderBuilder::new()
-        .has_headers(true)
-        .from_reader(marker_csv.as_bytes());
-    let markers: Vec<Marker> = marker_reader.deserialize().collect::<Result<_, _>>()?;
-    let markers = markers.into_iter().map(|x| x.time).collect::<Vec<_>>();
-    if markers.len() != N {
-        bail!("Expected {} markers, got {}", N, markers.len());
-    }
+    let markers = match marker_csv {
+        Some(marker_csv) => {
+            let mut marker_reader = ReaderBuilder::new()
+                .has_headers(true)
+                .from_reader(marker_csv.as_bytes());
+            let markers: Vec<Marker> = marker_reader.deserialize().collect::<Result<_, _>>()?;
+            let markers = markers.into_iter().map(|x| x.time).collect::<Vec<_>>();
+            if markers.len() != N {
+                bail!("Expected {} markers, got {}", N, markers.len());
+            }
+            markers
+        }
+        None => vec![],
+    };
 
     let mut rdr = ReaderBuilder::new()
         .has_headers(true)
@@ -375,7 +405,7 @@ pub fn calculate_sectioned<CalculatedData: Debug + Default + Copy, const N: usiz
     let col_idx = headers
         .iter()
         .position(|h| h == column_name)
-        .context(format!("No '{}' column found", column_name))?;
+        .context(format!("No '{column_name}' column found"))?;
 
     let records: Vec<StringRecord> = rdr.records().filter_map(Result::ok).collect();
     let parse = |rec: &StringRecord| -> Option<(usize, f64)> {
@@ -395,9 +425,10 @@ pub fn calculate_sectioned<CalculatedData: Debug + Default + Copy, const N: usiz
     let mut stats = [CalculatedData::default(); N];
     let mut markers_final = [0; N];
     for (i, bound) in markers.iter().enumerate() {
-        let section_data: Vec<&(usize, f64)> = data
+        let section_data: Vec<(usize, f64)> = data
             .iter()
             .filter(|&&(t, _)| t >= prev && t < *bound)
+            .cloned()
             .collect();
 
         prev = *bound;
@@ -405,7 +436,7 @@ pub fn calculate_sectioned<CalculatedData: Debug + Default + Copy, const N: usiz
         markers_final[i] = *bound;
     }
 
-    let overall = calculator(&data.iter().collect::<Vec<_>>());
+    let overall = calculator(&data);
 
     Ok((stats, overall, markers_final))
 }
@@ -438,7 +469,7 @@ pub fn parse_trace(input: &str, fs: &Filesystem) -> Result<Vec<TraceCalls>> {
         let line = raw.trim_start();
 
         if let Some(ts_str) = line.strip_prefix("time:") {
-            if let Some(tok) = ts_str.trim().split_whitespace().next() {
+            if let Some(tok) = ts_str.split_whitespace().next() {
                 current_ts = tok.parse().ok();
             } else {
                 current_ts = None;
@@ -460,7 +491,7 @@ pub fn parse_trace(input: &str, fs: &Filesystem) -> Result<Vec<TraceCalls>> {
                 body_lines.push(inside.to_string());
                 count = line[idx + 2..].trim().parse().unwrap_or(0);
             } else {
-                while let Some(next_raw) = lines.next() {
+                for next_raw in lines.by_ref() {
                     let l = next_raw.trim();
                     if let Some(idx) = l.find("]: ") {
                         body_lines.push(l[..idx].to_string());
@@ -522,7 +553,7 @@ pub struct SectionStats {
     pub energy: Option<f64>,
 }
 
-pub fn power_energy_calculator(data: &[&(usize, f64)]) -> SectionStats {
+pub fn power_energy_calculator(data: &[(usize, f64)]) -> SectionStats {
     let (sum, count) = data.iter().fold((0.0, 0), |(s, c), &(_, v)| (s + v, c + 1));
     let mean = if count > 0 {
         Some(sum / count as f64)
@@ -535,7 +566,7 @@ pub fn power_energy_calculator(data: &[&(usize, f64)]) -> SectionStats {
         for win in data.windows(2) {
             let (t0, p0) = win[0];
             let (t1, p1) = win[1];
-            let dt = (*t1 as f64) - (*t0 as f64);
+            let dt = (t1 as f64) - (t0 as f64);
             e += 0.5 * (p0 + p1) * dt;
         }
         Some(e)
@@ -547,4 +578,55 @@ pub fn power_energy_calculator(data: &[&(usize, f64)]) -> SectionStats {
         power: mean,
         energy,
     }
+}
+
+pub async fn mount_fs(
+    mountpoint: &Path,
+    device: &str,
+    fs: Filesystem,
+    should_format: bool,
+    mount_opts: Option<impl Into<String>>,
+) -> Result<()> {
+    create_dir_all(mountpoint).await?;
+    if let Err(err) = simple_command_with_output_no_dir("umount", &[device]).await {
+        match &err {
+            CommandError::RunError { stderr, .. } => {
+                if !stderr.contains(": not mounted.") {
+                    bail!(err);
+                }
+            }
+            _ => {
+                bail!(err);
+            }
+        }
+    }
+
+    if should_format {
+        _ = simple_command_with_output_no_dir("bash", &["-c", &fs.cmd(device)?]).await?;
+    }
+    let mut args = match mount_opts {
+        Some(mount_opts) => vec!["-o".to_owned(), mount_opts.into()],
+        None => vec![],
+    };
+
+    args.extend([device.to_owned(), mountpoint.to_str().unwrap().to_owned()]);
+    _ = simple_command_with_output_no_dir(
+        "mount",
+        &args.iter().map(|x| x.as_str()).collect::<Vec<_>>(),
+    )
+    .await?;
+    Ok(())
+}
+
+pub async fn chown_user(dir: &Path) -> Result<()> {
+    _ = simple_command_with_output_no_dir(
+        "chown",
+        &[
+            "-R",
+            &std::env::var("SUDO_USER").context("energy-benchmark expectes to be run with sudo")?,
+            dir.to_str().unwrap(),
+        ],
+    )
+    .await;
+    Ok(())
 }

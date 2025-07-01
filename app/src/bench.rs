@@ -8,11 +8,11 @@ use std::{
 
 use chrono::Local;
 use common::{
-    bench::{Bench, BenchArgs, BenchmarkInfo, Cmd},
+    bench::{Bench, BenchArgs, BenchmarkInfo, Cmd, CmdsResult},
     config::Config,
     plot::{PlotType, plot},
     sensor::{Sensor, SensorArgs, SensorRequest},
-    util::remove_indices,
+    util::{chown_user, remove_indices, simple_command_with_output_no_dir},
 };
 use console::style;
 use eyre::{Context, Result, bail};
@@ -40,6 +40,7 @@ pub async fn run_benchmark(config_file: String, no_progress: bool) -> Result<()>
         );
     }
 
+    _ = simple_command_with_output_no_dir("umount", &[&config.settings.device]).await;
     let file_prefix = Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
     println!(
         "Results created in folder: results/{}-{file_prefix}",
@@ -76,6 +77,7 @@ pub async fn run_benchmark(config_file: String, no_progress: bool) -> Result<()>
     create_dir_all(&plot_path).await?;
     copy(config_file, results_path.join("config.yaml")).await?;
 
+    debug!("Initial results setup done!");
     let nvme_power_states = match &config.settings.nvme_power_states {
         Some(ps) => ps.iter().map(|x| *x as i32).collect(),
         None => vec![],
@@ -114,7 +116,7 @@ pub async fn run_benchmark(config_file: String, no_progress: bool) -> Result<()>
         let mut last_experiment: Option<Box<dyn Bench>> = None;
         let mut experiment_dirs = Vec::new();
         let bench_args = get_bench_args(&config.bench_args, &*experiment.bench);
-        let (program, cmds) =
+        let CmdsResult { cmds, program } =
             experiment
                 .bench
                 .cmds(&config.settings, &*bench_args, &experiment.name)?;
@@ -122,11 +124,11 @@ pub async fn run_benchmark(config_file: String, no_progress: bool) -> Result<()>
         let total_commands = cmds.len();
         for power_state in &ps {
             for (
-                current_command,
+                curr_cmd_idx,
                 Cmd {
                     args,
                     hash,
-                    arg_obj: bench_obj,
+                    bench_obj,
                 },
             ) in cmds.iter().enumerate()
             {
@@ -157,6 +159,7 @@ pub async fn run_benchmark(config_file: String, no_progress: bool) -> Result<()>
                         info!("Power state of {nvme_cli_device} change to {power_state}");
                     }
                 }
+
                 let mut i = 0;
                 let mut total_outliers = 0;
                 let mut dirs = Vec::new();
@@ -170,11 +173,11 @@ pub async fn run_benchmark(config_file: String, no_progress: bool) -> Result<()>
                         } else {
                             power_state.to_string()
                         },
-                        current_command + 1,
+                        curr_cmd_idx + 1,
                         total_commands,
                         i,
                         if total_outliers > 0 {
-                            format!(" ({} retries)", total_outliers)
+                            format!(" ({total_outliers} retries)")
                         } else {
                             String::new()
                         }
@@ -200,6 +203,17 @@ pub async fn run_benchmark(config_file: String, no_progress: bool) -> Result<()>
                         },
                     );
                     create_dir_all(&final_path).await?;
+                    chown_user(&final_path).await?;
+
+                    bench_obj
+                        .experiment_init(
+                            &data_path,
+                            &config.settings,
+                            &*bench_args,
+                            &last_experiment,
+                        )
+                        .await?;
+                    chown_user(&final_path).await?;
 
                     let mut args = args.clone();
                     bench_obj.add_path_args(&mut args, &final_path);
@@ -241,12 +255,17 @@ pub async fn run_benchmark(config_file: String, no_progress: bool) -> Result<()>
                         "Iteration {} [{} retries]",
                         i + 1,
                         if total_outliers > 0 {
-                            format!(" ({} retries)", total_outliers)
+                            format!(" ({total_outliers} retries)")
                         } else {
                             "0".to_owned()
                         }
                     ));
                     debug!("Done with bench {} iter={}", experiment.name, i);
+
+                    bench_obj
+                        .post_experiment(&data_path, &final_path, &config.settings, &*bench_args)
+                        .await
+                        .context("Error running post experiment")?;
 
                     i += 1;
                     if i >= experiment.repeat + total_outliers {
@@ -254,17 +273,17 @@ pub async fn run_benchmark(config_file: String, no_progress: bool) -> Result<()>
                         let num_outliers = outliers.len();
                         debug!("num_outliers={num_outliers} size={}", dirs.len());
 
-                        if let Some(max_repeat) = &config.settings.max_repeat {
-                            if i >= *max_repeat {
-                                debug!("Max repeat reached");
-                                debug!("Moving to next test");
-                                write(
-                                    results_path.join("info.json"),
-                                    serde_json::to_string(&benchmark_info)?,
-                                )
-                                .await?;
-                                break;
-                            }
+                        if let Some(max_repeat) = &config.settings.max_repeat
+                            && i >= *max_repeat
+                        {
+                            debug!("Max repeat reached");
+                            debug!("Moving to next test");
+                            write(
+                                results_path.join("info.json"),
+                                serde_json::to_string(&benchmark_info)?,
+                            )
+                            .await?;
+                            break;
                         }
 
                         if num_outliers > 0 {
@@ -383,7 +402,7 @@ fn calculate_total_units(config: &Config) -> usize {
             .bench
             .cmds(&config.settings, &*bench_args, &exp.name)
             .unwrap()
-            .1
+            .cmds
             .len();
         acc + power_states * commands * exp.repeat
     })
@@ -440,9 +459,9 @@ fn format_seconds(seconds: f64) -> String {
     let seconds = (seconds % 60.0) as u64;
 
     if hours > 0 {
-        format!("{:02}:{:02}:{:02}", hours, minutes, seconds)
+        format!("{hours:02}:{minutes:02}:{seconds:02}")
     } else {
-        format!("{:02}:{:02}", minutes, seconds)
+        format!("{minutes:02}:{seconds:02}")
     }
 }
 

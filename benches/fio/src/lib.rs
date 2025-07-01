@@ -1,9 +1,9 @@
 use std::path::Path;
 
 use common::{
-    bench::{Bench, BenchArgs, Cmd},
-    config::Settings,
-    util::{find_outliers_by_stddev, get_mean_power},
+    bench::{Bench, BenchArgs, Cmd, CmdsResult},
+    config::{Config, Settings},
+    util::{find_outliers_by_stddev, get_mean_power, simple_command_with_output_no_dir},
 };
 use eyre::{Context, ContextCompat, Result};
 use itertools::iproduct;
@@ -105,7 +105,7 @@ impl Bench for Fio {
         settings: &Settings,
         bench_args: &dyn BenchArgs,
         name: &str,
-    ) -> Result<(String, Vec<Cmd>)> {
+    ) -> Result<CmdsResult> {
         let bench_args = bench_args
             .downcast_ref::<FioConfig>()
             .context("Invalid bench args, expected args for fio")?;
@@ -196,16 +196,19 @@ impl Bench for Fio {
             Cmd {
                 args,
                 hash,
-                arg_obj: Box::new(bench),
+                bench_obj: Box::new(bench),
             }
         })
         .collect();
 
-        Ok((bench_args.program.clone().unwrap_or("fio".to_owned()), cmds))
+        Ok(CmdsResult {
+            program: bench_args.program.clone().unwrap_or("fio".to_owned()),
+            cmds,
+        })
     }
 
-    fn add_path_args(&self, args: &mut Vec<String>, results_dir: &Path) {
-        let final_path_str = results_dir.to_str().unwrap();
+    fn add_path_args(&self, args: &mut Vec<String>, final_results_dir: &Path) {
+        let final_path_str = final_results_dir.to_str().unwrap();
         args.push(format!("--output={final_path_str}/results.json"));
         args.push(format!("--write_bw_log={final_path_str}/log"));
         args.push(format!("--write_iops_log={final_path_str}/log"));
@@ -239,6 +242,54 @@ impl Bench for Fio {
             }
         }
         Ok(outliers)
+    }
+}
+
+impl Fio {
+    pub async fn prefill(
+        prefill_file: &Path,
+        size: &str,
+        config: &Config,
+        settings: &Settings,
+    ) -> Result<()> {
+        if prefill_file.exists() {
+            return Ok(());
+        }
+
+        debug!("Creating prefill file");
+        let fio = Fio {
+            test_type: FioTestTypeConfig {
+                _type: FioTestType::Write,
+                args: None,
+            },
+            request_sizes: vec!["4M".to_owned()],
+            io_engines: vec!["io_uring".to_owned()],
+            io_depths: vec![256],
+            direct: true,
+            time_based: false,
+            runtime: None,
+            ramp_time: None,
+            size: Some(size.to_owned()),
+            extra_options: None,
+            num_jobs: None,
+        };
+
+        let bench_args: Box<dyn BenchArgs> = 'outer: {
+            for item in &config.bench_args {
+                if let Some(fio_args) = item.downcast_ref::<FioConfig>() {
+                    break 'outer Box::new(fio_args.clone());
+                }
+            }
+            fio.default_bench_args()
+        };
+        let mut prefill_settings = settings.clone();
+        prefill_settings.device = prefill_file.to_str().unwrap().to_owned();
+        prefill_settings.numa = None;
+        prefill_settings.nvme_power_states = None;
+        let CmdsResult { cmds, program } = fio.cmds(&prefill_settings, &*bench_args, "prefill")?;
+        let args = cmds[0].args.iter().map(|x| x.as_str()).collect::<Vec<_>>();
+        _ = simple_command_with_output_no_dir(&program, &args).await?;
+        Ok(())
     }
 }
 

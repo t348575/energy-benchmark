@@ -162,7 +162,7 @@ async fn init_pmt(args: PmtConfig) -> Result<(Arc<Mutex<InternalPmt>>, Vec<Strin
                 let num = format!("{}", sensor_names.last().unwrap().chars().last().unwrap())
                     .parse::<u32>()
                     .unwrap();
-                sensor_names.push(format!("dram-{}", num));
+                sensor_names.push(format!("dram-{num}"));
                 continue;
             }
             sensor_names.push(name);

@@ -184,7 +184,7 @@ impl Plot for FioBasic {
         plot_jobs.push((
             ready_entries.clone(),
             settings,
-            throughput_dir.join(format!("{}.pdf", experiment_name)),
+            throughput_dir.join(format!("{experiment_name}.pdf")),
             "throughput",
             None,
             |data| {
@@ -198,7 +198,7 @@ impl Plot for FioBasic {
         plot_jobs.push((
             ready_entries.clone(),
             settings,
-            latency_dir.join(format!("{}.pdf", experiment_name)),
+            latency_dir.join(format!("{experiment_name}.pdf")),
             "latency",
             None,
             |data| data.result.jobs.iter().map(mean_latency).sum::<f64>(),
@@ -206,7 +206,7 @@ impl Plot for FioBasic {
         plot_jobs.push((
             ready_entries.clone(),
             settings,
-            latency_dir.join(format!("{}-p99.pdf", experiment_name)),
+            latency_dir.join(format!("{experiment_name}-p99.pdf")),
             "latency",
             None,
             |data| data.result.jobs.iter().map(mean_p99_latency).sum::<f64>(),
@@ -214,7 +214,7 @@ impl Plot for FioBasic {
         plot_jobs.push((
             ready_entries.clone(),
             settings,
-            power_dir.join(format!("{}-ssd.pdf", experiment_name)),
+            power_dir.join(format!("{experiment_name}-ssd.pdf")),
             "power",
             Some("SSD"),
             |data| data.ssd_power,
@@ -222,7 +222,7 @@ impl Plot for FioBasic {
         plot_jobs.push((
             ready_entries.clone(),
             settings,
-            power_dir.join(format!("{}-cpu.pdf", experiment_name)),
+            power_dir.join(format!("{experiment_name}-cpu.pdf")),
             "power",
             Some("CPU + DRAM"),
             |data| data.cpu_power,
@@ -230,7 +230,7 @@ impl Plot for FioBasic {
         plot_jobs.push((
             ready_entries.clone(),
             settings,
-            power_dir.join(format!("{}-dram.pdf", experiment_name)),
+            power_dir.join(format!("{experiment_name}-dram.pdf")),
             "power",
             Some("DRAM 1"),
             |data| data.dram_power,
@@ -238,7 +238,7 @@ impl Plot for FioBasic {
         plot_jobs.push((
             ready_entries.clone(),
             settings,
-            power_dir.join(format!("{}-node-0.pdf", experiment_name)),
+            power_dir.join(format!("{experiment_name}-node-0.pdf")),
             "power",
             Some("Node 0"),
             |data| data.node_0_power,
@@ -246,7 +246,7 @@ impl Plot for FioBasic {
         plot_jobs.push((
             ready_entries.clone(),
             settings,
-            power_dir.join(format!("{}-node-1.pdf", experiment_name)),
+            power_dir.join(format!("{experiment_name}-node-1.pdf")),
             "power",
             Some("Node 1"),
             |data| data.node_1_power,

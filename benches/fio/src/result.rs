@@ -51,16 +51,16 @@ pub struct JobOptions {
     pub filename: String,
     pub rw: String,
     pub direct: String,
-    pub bs: String,
-    pub ioengine: String,
+    pub bs: Option<String>,
+    pub ioengine: Option<String>,
     pub time_based: String,
-    pub iodepth: String,
+    pub iodepth: Option<String>,
     pub runtime: Option<String>,
     pub size: Option<String>,
-    pub write_bw_log: String,
-    pub write_iops_log: String,
+    pub write_bw_log: Option<String>,
+    pub write_iops_log: Option<String>,
     pub log_avg_msec: Option<String>,
-    pub write_lat_log: String,
+    pub write_lat_log: Option<String>,
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
