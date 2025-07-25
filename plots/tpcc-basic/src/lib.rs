@@ -100,20 +100,20 @@ impl Plot for TpccBasic {
                 let (_, rapl_overall, _) = calculate_sectioned::<_, 0>(
                     None,
                     &rapl,
-                    "Total",
-                    0.0,
-                    200.0,
+                    &["Total"],
+                    &[(0.0, 200.0)],
                     power_energy_calculator,
+                    None,
                 )
                 .context("Calculate rapl means")
                 .unwrap();
                 let (_, ps3_overall, _times) = calculate_sectioned::<_, 0>(
                     None,
                     &powersensor3,
-                    "Total",
-                    0.0,
-                    8.5,
+                    &["Total"],
+                    &[(0.0, 8.5)],
                     power_energy_calculator,
+                    None,
                 )
                 .context("Calculate powersensor3 means")
                 .unwrap();
@@ -130,35 +130,71 @@ impl Plot for TpccBasic {
 
         let experiment_name = ready_entries[0].info.name.clone();
         let throughput_dir = plot_path.join("throughput");
-        create_dir_all(&throughput_dir).await?;
-        self.bar_plot(
-            ready_entries.clone(),
-            settings,
-            throughput_dir.join(format!("{experiment_name}-requests.pdf")),
-            "throughput",
-            "requests/s",
-            |data| data.result.summary.throughput as f64,
-        )?;
-
-        self.bar_plot(
-            ready_entries.clone(),
-            settings,
-            throughput_dir.join(format!("{experiment_name}-tpmc.pdf")),
-            "throughput",
-            "tpmC",
-            |data| data.result.summary.tpmc as f64,
-        )?;
-        self.bar_plot(
-            ready_entries.clone(),
-            settings,
-            throughput_dir.join(format!("{experiment_name}-efficiency.pdf")),
-            "throughput",
-            "%",
-            |data| data.result.summary.efficiency,
-        )?;
-
         let efficiency_dir = plot_path.join("efficiency");
-        create_dir_all(&efficiency_dir).await?;
+        let power_dir = plot_path.join("power");
+        let dirs = [&power_dir, &throughput_dir, &efficiency_dir];
+        for dir in join_all(dirs.iter().map(create_dir_all)).await.into_iter() {
+            dir?;
+        }
+
+        let plot_jobs: Vec<(
+            Vec<PlotEntry>,
+            &Settings,
+            PathBuf,
+            &str,
+            &str,
+            fn(&PlotEntry) -> f64,
+        )> = vec![
+            (
+                ready_entries.clone(),
+                settings,
+                throughput_dir.join(format!("{experiment_name}-requests.pdf")),
+                "throughput",
+                "requests/s",
+                |data| data.result.summary.throughput as f64,
+            ),
+            (
+                ready_entries.clone(),
+                settings,
+                throughput_dir.join(format!("{experiment_name}-tpmc.pdf")),
+                "throughput",
+                "tpmC",
+                |data| data.result.summary.tpmc as f64,
+            ),
+            (
+                ready_entries.clone(),
+                settings,
+                throughput_dir.join(format!("{experiment_name}-efficiency.pdf")),
+                "throughput",
+                "%",
+                |data| data.result.summary.efficiency,
+            ),
+            (
+                ready_entries.clone(),
+                settings,
+                power_dir.join(format!("{experiment_name}-cpu.pdf")),
+                "power",
+                "%",
+                |data| data.cpu_power.power.unwrap(),
+            ),
+            (
+                ready_entries.clone(),
+                settings,
+                power_dir.join(format!("{experiment_name}-ssd.pdf")),
+                "power",
+                "%",
+                |data| data.ssd_power.power.unwrap(),
+            ),
+        ];
+
+        let results = plot_jobs
+            .into_par_iter()
+            .map(|x| self.bar_plot(x.0, x.1, x.2, x.3, x.4, x.5))
+            .collect::<Vec<_>>();
+        for item in results {
+            item?;
+        }
+
         self.efficiency(ready_entries.clone(), settings, &efficiency_dir)
             .await?;
         Ok(())
@@ -242,7 +278,7 @@ impl TpccBasic {
         let results = ready_entries
             .par_iter()
             .map(|item| {
-                let ops = item.result.summary.throughput;
+                let ops = item.result.summary.tpmc as f64;
                 let x = *order
                     .get(&format!("{}", item.args.num_clients[0],))
                     .unwrap();
@@ -252,8 +288,11 @@ impl TpccBasic {
                     item.info.power_state
                 } as usize;
 
-                let power = item.ssd_power.power.unwrap() + item.cpu_power.power.unwrap();
-                (x, y, ops as f64 / power)
+                (
+                    x,
+                    y,
+                    ops / ((item.ssd_power.power.unwrap() + item.cpu_power.power.unwrap()) * 60.0),
+                )
             })
             .collect::<Vec<_>>();
         for item in results {
@@ -283,7 +322,7 @@ impl TpccBasic {
         let jobs = [(
             plot_path.join(format!("{}-iops-j.pdf", &experiment_name)),
             ops_j,
-            "Samples/J",
+            "TPMC/J",
             "overall",
             false,
         )];
@@ -392,24 +431,17 @@ impl TpccPowerTime {
         );
 
         let mut args = vec![
-            "plots/tpcc_time.py",
-            "--plot_dir",
-            plot_path.to_str().unwrap(),
-            "--results_dir",
-            data_path.to_str().unwrap(),
-            "--name",
-            &name,
+            ("--plot_dir", plot_path.to_str().unwrap()),
+            ("--results_dir", data_path.to_str().unwrap()),
+            ("--name", &name),
         ]
         .into_iter()
-        .map(|x| x.to_owned())
+        .map(|x| (x.0.to_owned(), x.1.to_owned()))
         .collect::<Vec<_>>();
-        debug!("{}", args.join(" "));
         if let Some(offset) = &self.offset {
-            args.push("--offset".to_owned());
-            args.push(offset.to_string());
+            args.push(("--offset".to_owned(), offset.to_string()));
         }
-        let mut child = std::process::Command::new("python3").args(args).spawn()?;
-        child.wait()?;
+        plot_python("tpcc_time", &args)?;
         Ok(())
     }
 }

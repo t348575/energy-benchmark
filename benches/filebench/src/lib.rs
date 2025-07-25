@@ -139,6 +139,7 @@ impl Bench for Filebench {
         &self,
         program: &str,
         args: &[String],
+        _env: &HashMap<String, String>,
         settings: &Settings,
         sensors: &[Sender<SensorRequest>],
         final_results_dir: &Path,

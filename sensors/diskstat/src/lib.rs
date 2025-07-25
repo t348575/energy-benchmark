@@ -6,9 +6,9 @@ use std::{
 
 use common::{
     sensor::{Sensor, SensorArgs, SensorReply, SensorRequest},
-    util::sensor_reader,
+    util::{SensorError, sensor_reader},
 };
-use eyre::{ContextCompat, Result};
+use eyre::{Context, ContextCompat, Result};
 use flume::{Receiver, Sender};
 use serde::{Deserialize, Serialize};
 use tokio::{
@@ -75,9 +75,13 @@ impl Sensor for Diskstat {
                 "diskstat",
                 args,
                 init_diskstat,
-                |_, sensor: &Arc<Mutex<InternalDiskStat>>, _, last_time| -> std::pin::Pin<Box<dyn Future<Output = Result<Vec<f64>>> + Send>> {
-                    Box::pin(read_diskstat(sensor.clone(), last_time))
-                },
+                |_,
+                 sensor: &Arc<Mutex<InternalDiskStat>>,
+                 _,
+                 last_time|
+                 -> std::pin::Pin<
+                    Box<dyn Future<Output = Result<Vec<f64>, SensorError>> + Send>,
+                > { Box::pin(read_diskstat(sensor.clone(), last_time)) },
             )
             .await
             {
@@ -126,10 +130,8 @@ async fn init_diskstat(
     ))
 }
 
-async fn read_diskstat(
-    sensor: Arc<Mutex<InternalDiskStat>>,
-    last_time: Instant,
-) -> Result<Vec<f64>> {
+type ReadDiskResult = Result<Vec<f64>, SensorError>;
+async fn read_diskstat(sensor: Arc<Mutex<InternalDiskStat>>, last_time: Instant) -> ReadDiskResult {
     let mut sensor = sensor.lock().await;
     let start_time = Instant::now();
     let readings = sensor.read(&last_time).await?;
@@ -145,10 +147,18 @@ async fn read_diskstat(
 }
 
 impl InternalDiskStat {
-    async fn read(&mut self, prev_time: &Instant) -> Result<Vec<f64>> {
+    async fn read(&mut self, prev_time: &Instant) -> ReadDiskResult {
         let mut buf = String::new();
-        self.file.seek(std::io::SeekFrom::Start(0)).await?;
-        self.file.read_to_string(&mut buf).await?;
+        self.file
+            .seek(std::io::SeekFrom::Start(0))
+            .await
+            .context("Seek to start")
+            .map_err(SensorError::MajorFailure)?;
+        self.file
+            .read_to_string(&mut buf)
+            .await
+            .context("Read to string")
+            .map_err(SensorError::MajorFailure)?;
 
         let fields: Vec<u64> = buf.split_whitespace().map(|s| s.parse().unwrap()).collect();
 

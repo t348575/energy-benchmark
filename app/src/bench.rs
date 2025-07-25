@@ -27,7 +27,7 @@ use tokio::{
 };
 use tracing::{debug, error, info, warn};
 
-pub async fn run_benchmark(config_file: String, no_progress: bool) -> Result<()> {
+pub async fn run_benchmark(config_file: String, no_progress: bool, skip_plot: bool) -> Result<()> {
     let config: Config = serde_yml::from_str(&read_to_string(&config_file).await?)?;
     let unique_bench_names = config
         .benches
@@ -103,7 +103,6 @@ pub async fn run_benchmark(config_file: String, no_progress: bool) -> Result<()>
     let mut benchmark_info = HashMap::new();
     let total_experiments = config.benches.len();
     let mut current_experiment = 0;
-    let custom_power_state_setter = config.settings.custom_power_state_setter.unwrap_or(false);
     let mut append_spdk_power_state = false;
 
     for experiment in &config.benches {
@@ -133,11 +132,12 @@ pub async fn run_benchmark(config_file: String, no_progress: bool) -> Result<()>
             ) in cmds.iter().enumerate()
             {
                 if *power_state != -1 {
-                    if custom_power_state_setter {
+                    if bench_obj.requires_custom_power_state_setter() {
                         if bench_obj.name() == "fio" {
                             append_spdk_power_state = true;
                         }
                     } else {
+                        append_spdk_power_state = false;
                         let mut ps_change_cmd = Command::new("nvme")
                             .args([
                                 "set-feature",
@@ -222,11 +222,16 @@ pub async fn run_benchmark(config_file: String, no_progress: bool) -> Result<()>
                         args.push(format!("--power_state={power_state}"));
                     }
 
+                    let env = bench_obj
+                        .add_env(&*bench_args)
+                        .context("Get benchmark env")?;
+
                     debug!("iter={} program={} args={}", i, program, args.join(" "));
                     let result = bench_obj
                         .run(
                             &program,
                             &args,
+                            &env,
                             &config.settings,
                             &sensors,
                             &final_path,
@@ -321,20 +326,23 @@ pub async fn run_benchmark(config_file: String, no_progress: bool) -> Result<()>
             style("Generating plots...").dim()
         ));
 
-        plot(
-            &experiment.plots,
-            PlotType::Individual,
-            &data_path,
-            &plot_path,
-            &config,
-            &benchmark_info,
-            experiment_dirs.clone(),
-            &config.settings,
-            &mut Vec::new(),
-        )
-        .await?;
+        if !skip_plot {
+            plot(
+                &experiment.plots,
+                PlotType::Individual,
+                &data_path,
+                &plot_path,
+                &config,
+                &benchmark_info,
+                experiment_dirs.clone(),
+                &config.settings,
+                &mut Vec::new(),
+            )
+            .await?;
+        }
 
         debug!("Plotting done");
+        sleep(Duration::from_secs(1)).await;
     }
 
     progress.finish().await;
@@ -348,20 +356,22 @@ pub async fn run_benchmark(config_file: String, no_progress: bool) -> Result<()>
         s.await??;
     }
 
-    let mut completed_dirs = Vec::new();
-    for experiment in &config.benches {
-        common::plot::plot(
-            &experiment.plots,
-            PlotType::Total,
-            &data_path,
-            &plot_path,
-            &config,
-            &benchmark_info,
-            benchmark_info.keys().cloned().collect(),
-            &config.settings,
-            &mut completed_dirs,
-        )
-        .await?;
+    if !skip_plot {
+        let mut completed_dirs = Vec::new();
+        for experiment in &config.benches {
+            common::plot::plot(
+                &experiment.plots,
+                PlotType::Total,
+                &data_path,
+                &plot_path,
+                &config,
+                &benchmark_info,
+                benchmark_info.keys().cloned().collect(),
+                &config.settings,
+                &mut completed_dirs,
+            )
+            .await?;
+        }
     }
 
     debug!("Exiting");

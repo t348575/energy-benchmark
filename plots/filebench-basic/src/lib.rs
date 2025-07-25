@@ -34,7 +34,7 @@ struct PlotEntry {
     args: Filebench,
     ssd_power: SectionedCalculation,
     cpu_power: SectionedCalculation,
-    times: [usize; 3],
+    _times: [usize; 3],
 }
 
 #[async_trait::async_trait]
@@ -108,20 +108,20 @@ impl Plot for FilebenchBasic {
                 let (rapl_means, rapl_overall, _) = calculate_sectioned::<_, 3>(
                     Some(&markers),
                     &rapl,
-                    "Total",
-                    0.0,
-                    200.0,
+                    &["Total"],
+                    &[(0.0, 200.0)],
                     power_energy_calculator,
+                    None,
                 )
                 .context("Calculate rapl means")
                 .unwrap();
                 let (powersensor3_means, ps3_overall, times) = calculate_sectioned::<_, 3>(
                     Some(&markers),
                     &powersensor3,
-                    "Total",
-                    0.0,
-                    8.5,
+                    &["Total"],
+                    &[(0.0, 8.5)],
                     power_energy_calculator,
+                    None,
                 )
                 .context("Calculate powersensor3 means")
                 .unwrap();
@@ -142,116 +142,176 @@ impl Plot for FilebenchBasic {
                         benchmark: rapl_means[1],
                         post_benchmark: rapl_means[2],
                     },
-                    times,
+                    _times: times,
                 }
             })
             .collect::<Vec<_>>();
 
-        let experiment_name = ready_entries[0].info.name.clone();
         let throughput_dir = plot_path.join("throughput");
-        create_dir_all(&throughput_dir).await?;
-        self.bar_plot(
-            ready_entries.clone(),
-            settings,
-            throughput_dir.join(format!("{experiment_name}-read.pdf")),
-            "throughput",
-            None,
-            "",
-            |data| {
-                data.result
-                    .ops_stats
-                    .iter()
-                    .filter(|x| x.name.starts_with("readfile"))
-                    .map(|x| x.mb_per_sec)
-                    .sum()
-            },
-        )?;
-
-        self.bar_plot(
-            ready_entries.clone(),
-            settings,
-            throughput_dir.join(format!("{experiment_name}-write.pdf")),
-            "throughput",
-            None,
-            "",
-            |data| {
-                let write_names = ["writefile", "wrtfile", "append", "fsync"];
-                data.result
-                    .ops_stats
-                    .iter()
-                    .filter(|x| {
-                        write_names
-                            .iter()
-                            .any(|write_name| x.name.starts_with(write_name))
-                    })
-                    .map(|x| x.mb_per_sec)
-                    .sum()
-            },
-        )?;
-
-        let iops_dir = plot_path.join("iops");
-        create_dir_all(&iops_dir).await?;
-        self.bar_plot(
-            ready_entries.clone(),
-            settings,
-            iops_dir.join(format!("{experiment_name}.pdf")),
-            "throughput",
-            None,
-            "kOPS/s",
-            |data| data.result.summary.ops_per_sec / 1000.0,
-        )?;
-
         let latency_dir = plot_path.join("latency");
-        self.bar_plot(
-            ready_entries.clone(),
-            settings,
-            latency_dir.join(format!("{experiment_name}.pdf")),
-            "latency",
-            None,
-            "ms",
-            |data| data.result.summary.latency_ms,
-        )?;
-
-        let power_dir = plot_path.join("power");
-        self.bar_plot(
-            ready_entries.clone(),
-            settings,
-            power_dir.join(format!("{experiment_name}-overall.pdf",)),
-            "power",
-            Some("CPU + DRAM"),
-            "ms",
-            |data| data.cpu_power.overall.power.unwrap(),
-        )?;
-        self.bar_plot(
-            ready_entries.clone(),
-            settings,
-            power_dir.join(format!("{experiment_name}-init.pdf",)),
-            "power",
-            Some("CPU + DRAM"),
-            "ms",
-            |data| data.cpu_power.init.power.unwrap(),
-        )?;
-        self.bar_plot(
-            ready_entries.clone(),
-            settings,
-            power_dir.join(format!("{experiment_name}-benchmark.pdf",)),
-            "power",
-            Some("CPU + DRAM"),
-            "ms",
-            |data| data.cpu_power.benchmark.power.unwrap(),
-        )?;
-        self.bar_plot(
-            ready_entries.clone(),
-            settings,
-            power_dir.join(format!("{experiment_name}-post-benchmark.pdf",)),
-            "power",
-            Some("CPU + DRAM"),
-            "ms",
-            |data| data.cpu_power.post_benchmark.power.unwrap(),
-        )?;
-
+        let power_dir_cpu = plot_path.join("power-cpu");
+        let power_dir_ssd = plot_path.join("power-ssd");
+        let iops_dir = plot_path.join("iops");
         let efficiency_dir = plot_path.join("efficiency");
-        create_dir_all(&efficiency_dir).await?;
+        let dirs = [
+            &throughput_dir,
+            &latency_dir,
+            &power_dir_cpu,
+            &power_dir_ssd,
+            &iops_dir,
+            &efficiency_dir,
+        ];
+        for dir in join_all(dirs.iter().map(create_dir_all)).await.into_iter() {
+            dir?;
+        }
+
+        let experiment_name = ready_entries[0].info.name.clone();
+        let plot_jobs: Vec<(
+            Vec<PlotEntry>,
+            &Settings,
+            PathBuf,
+            &str,
+            Option<&str>,
+            &str,
+            fn(&PlotEntry) -> f64,
+        )> = vec![
+            (
+                ready_entries.clone(),
+                settings,
+                throughput_dir.join(format!("{experiment_name}-read.pdf")),
+                "throughput",
+                None,
+                "MB/s",
+                |data| {
+                    data.result
+                        .ops_stats
+                        .iter()
+                        .filter(|x| x.name.starts_with("readfile"))
+                        .map(|x| x.mb_per_sec)
+                        .sum()
+                },
+            ),
+            (
+                ready_entries.clone(),
+                settings,
+                throughput_dir.join(format!("{experiment_name}-write.pdf")),
+                "throughput",
+                None,
+                "MB/s",
+                |data| {
+                    let write_names = ["writefile", "wrtfile", "append", "fsync"];
+                    data.result
+                        .ops_stats
+                        .iter()
+                        .filter(|x| {
+                            write_names
+                                .iter()
+                                .any(|write_name| x.name.starts_with(write_name))
+                        })
+                        .map(|x| x.mb_per_sec)
+                        .sum()
+                },
+            ),
+            (
+                ready_entries.clone(),
+                settings,
+                iops_dir.join(format!("{experiment_name}.pdf")),
+                "throughput",
+                None,
+                "kOPS/s",
+                |data| data.result.summary.ops_per_sec / 1000.0,
+            ),
+            (
+                ready_entries.clone(),
+                settings,
+                latency_dir.join(format!("{experiment_name}.pdf")),
+                "latency",
+                None,
+                "ms",
+                |data| data.result.summary.latency_ms,
+            ),
+            (
+                ready_entries.clone(),
+                settings,
+                power_dir_ssd.join(format!("{experiment_name}-overall.pdf",)),
+                "power",
+                Some("SSD"),
+                "ms",
+                |data| data.ssd_power.overall.power.unwrap(),
+            ),
+            (
+                ready_entries.clone(),
+                settings,
+                power_dir_ssd.join(format!("{experiment_name}-init.pdf",)),
+                "power",
+                Some("CPU + DRAM"),
+                "ms",
+                |data| data.ssd_power.init.power.unwrap(),
+            ),
+            (
+                ready_entries.clone(),
+                settings,
+                power_dir_ssd.join(format!("{experiment_name}-benchmark.pdf",)),
+                "power",
+                Some("CPU + DRAM"),
+                "ms",
+                |data| data.ssd_power.benchmark.power.unwrap(),
+            ),
+            (
+                ready_entries.clone(),
+                settings,
+                power_dir_ssd.join(format!("{experiment_name}-post-benchmark.pdf",)),
+                "power",
+                Some("CPU + DRAM"),
+                "ms",
+                |data| data.ssd_power.post_benchmark.power.unwrap(),
+            ),
+            (
+                ready_entries.clone(),
+                settings,
+                power_dir_cpu.join(format!("{experiment_name}-overall.pdf",)),
+                "power",
+                Some("CPU + DRAM"),
+                "ms",
+                |data| data.cpu_power.overall.power.unwrap(),
+            ),
+            (
+                ready_entries.clone(),
+                settings,
+                power_dir_cpu.join(format!("{experiment_name}-init.pdf",)),
+                "power",
+                Some("CPU + DRAM"),
+                "ms",
+                |data| data.cpu_power.init.power.unwrap(),
+            ),
+            (
+                ready_entries.clone(),
+                settings,
+                power_dir_cpu.join(format!("{experiment_name}-benchmark.pdf",)),
+                "power",
+                Some("CPU + DRAM"),
+                "ms",
+                |data| data.cpu_power.benchmark.power.unwrap(),
+            ),
+            (
+                ready_entries.clone(),
+                settings,
+                power_dir_cpu.join(format!("{experiment_name}-post-benchmark.pdf",)),
+                "power",
+                Some("CPU + DRAM"),
+                "ms",
+                |data| data.cpu_power.post_benchmark.power.unwrap(),
+            ),
+        ];
+
+        let results = plot_jobs
+            .into_par_iter()
+            .map(|x| self.bar_plot(x.0, x.1, x.2, x.3, x.4, x.5, x.6))
+            .collect::<Vec<_>>();
+        for item in results {
+            item?;
+        }
+
         self.efficiency(ready_entries.clone(), settings, &efficiency_dir)
             .await?;
         Ok(())
@@ -371,39 +431,18 @@ impl FilebenchBasic {
                     item.info.power_state
                 } as usize;
 
-                let benchmark_time = (item.times[2] - item.times[1]) as f64 / 1000.0;
                 (
                     x,
                     y,
-                    iops / ((item.ssd_power.overall.energy.unwrap()
-                        + item.cpu_power.overall.energy.unwrap())
-                        / benchmark_time),
-                    iops / ((item.ssd_power.init.energy.unwrap()
-                        + item.cpu_power.init.energy.unwrap())
-                        / benchmark_time),
-                    iops / ((item.ssd_power.benchmark.energy.unwrap()
-                        + item.cpu_power.benchmark.energy.unwrap())
-                        / benchmark_time),
-                    iops / ((item.ssd_power.post_benchmark.energy.unwrap()
-                        + item.cpu_power.post_benchmark.energy.unwrap())
-                        / benchmark_time),
-                    bytes
-                        / ((item.ssd_power.overall.energy.unwrap()
-                            + item.cpu_power.overall.energy.unwrap())
-                            / benchmark_time),
-                    bytes
-                        / ((item.ssd_power.init.energy.unwrap()
-                            + item.cpu_power.init.energy.unwrap())
-                            / benchmark_time),
-                    bytes
-                        / ((item.ssd_power.benchmark.energy.unwrap()
-                            + item.cpu_power.benchmark.energy.unwrap())
-                            / benchmark_time),
-                    bytes
-                        / ((item.ssd_power.post_benchmark.energy.unwrap()
-                            + item.cpu_power.post_benchmark.energy.unwrap())
-                            / benchmark_time),
-                    item.ssd_power.benchmark.power.unwrap() * latency,
+                    iops / item.ssd_power.overall.power.unwrap(),
+                    iops / item.ssd_power.init.power.unwrap(),
+                    iops / item.ssd_power.benchmark.power.unwrap(),
+                    iops / item.ssd_power.post_benchmark.power.unwrap(),
+                    bytes / item.ssd_power.overall.power.unwrap(),
+                    bytes / item.ssd_power.init.power.unwrap(),
+                    bytes / item.ssd_power.benchmark.power.unwrap(),
+                    bytes / item.ssd_power.post_benchmark.power.unwrap(),
+                    item.ssd_power.benchmark.power.unwrap() * latency.powi(2),
                 )
             })
             .collect::<Vec<_>>();
@@ -648,7 +687,7 @@ impl FilebenchPowerTime {
 
         let trace_file = data_path.join("trace.out");
         if trace_file.exists() {
-            let trace = parse_trace(&std::fs::read_to_string(&trace_file)?, fs)?;
+            let trace = parse_trace(&std::fs::File::open(&trace_file)?, fs)?;
             write_csv(
                 &plot_path.join("plot_data").join(format!("{name}.csv")),
                 &trace,
@@ -656,23 +695,17 @@ impl FilebenchPowerTime {
         }
 
         let mut args = vec![
-            "plots/filebench_time.py",
-            "--plot_dir",
-            plot_path.to_str().unwrap(),
-            "--results_dir",
-            data_path.to_str().unwrap(),
-            "--name",
-            &name,
+            ("--plot_dir", plot_path.to_str().unwrap()),
+            ("--results_dir", data_path.to_str().unwrap()),
+            ("--name", &name),
         ]
         .into_iter()
-        .map(|x| x.to_owned())
+        .map(|x| (x.0.to_owned(), x.1.to_owned()))
         .collect::<Vec<_>>();
         if let Some(offset) = &self.offset {
-            args.push("--offset".to_owned());
-            args.push(offset.to_string());
+            args.push(("--offset".to_owned(), offset.to_string()));
         }
-        let mut child = std::process::Command::new("python3").args(args).spawn()?;
-        child.wait()?;
+        plot_python("filebench_time", &args)?;
         Ok(())
     }
 }

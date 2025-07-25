@@ -105,20 +105,20 @@ impl Plot for YcsbBasic {
                 let (rapl_means, rapl_overall, _) = calculate_sectioned::<_, 2>(
                     Some(&markers),
                     &rapl,
-                    "Total",
-                    0.0,
-                    200.0,
+                    &["Total"],
+                    &[(0.0, 200.0)],
                     power_energy_calculator,
+                    None,
                 )
                 .context("Calculate rapl means")
                 .unwrap();
                 let (powersensor3_means, ps3_overall, _times) = calculate_sectioned::<_, 2>(
                     Some(&markers),
                     &powersensor3,
-                    "Total",
-                    0.0,
-                    8.5,
+                    &["Total"],
+                    &[(0.0, 8.5)],
                     power_energy_calculator,
+                    None,
                 )
                 .context("Calculate powersensor3 means")
                 .unwrap();
@@ -141,61 +141,79 @@ impl Plot for YcsbBasic {
             })
             .collect::<Vec<_>>();
 
-        let experiment_name = ready_entries[0].info.name.clone();
-        let iops_dir = plot_path.join("iops");
-        create_dir_all(&iops_dir).await?;
-        self.bar_plot(
-            ready_entries.clone(),
-            settings,
-            iops_dir.join(format!("{experiment_name}.pdf")),
-            "throughput",
-            "kOPS/s",
-            |data| data.result.throughput_ops_sec.as_ref().map(|x| x / 1000.0),
-        )?;
-
         let latency_dir = plot_path.join("latency");
-        self.bar_plot(
-            ready_entries.clone(),
-            settings,
-            latency_dir.join(format!("{experiment_name}-read.pdf")),
-            "latency",
-            "ms",
-            |data| data.result.read.as_ref().map(|x| x.p99_latency_us / 1000.0),
-        )?;
-        self.bar_plot(
-            ready_entries.clone(),
-            settings,
-            latency_dir.join(format!("{experiment_name}-update.pdf")),
-            "latency",
-            "ms",
-            |data| {
-                data.result
-                    .update
-                    .as_ref()
-                    .map(|x| x.p99_latency_us / 1000.0)
-            },
-        )?;
-
         let power_dir = plot_path.join("power");
-        self.bar_plot(
-            ready_entries.clone(),
-            settings,
-            power_dir.join(format!("{experiment_name}-cpu.pdf")),
-            "power",
-            "W",
-            |data| data.cpu_power.benchmark.power,
-        )?;
-        self.bar_plot(
-            ready_entries.clone(),
-            settings,
-            power_dir.join(format!("{experiment_name}-ssd.pdf")),
-            "power",
-            "W",
-            |data| data.ssd_power.benchmark.power,
-        )?;
-
+        let iops_dir = plot_path.join("iops");
         let efficiency_dir = plot_path.join("efficiency");
-        create_dir_all(&efficiency_dir).await?;
+        let dirs = [&latency_dir, &power_dir, &iops_dir, &efficiency_dir];
+        for dir in join_all(dirs.iter().map(create_dir_all)).await.into_iter() {
+            dir?;
+        }
+
+        let experiment_name = ready_entries[0].info.name.clone();
+        let plot_jobs: Vec<(
+            Vec<PlotEntry>,
+            &Settings,
+            PathBuf,
+            &str,
+            &str,
+            fn(&PlotEntry) -> Option<f64>,
+        )> = vec![
+            (
+                ready_entries.clone(),
+                settings,
+                iops_dir.join(format!("{experiment_name}.pdf")),
+                "throughput",
+                "kOPS/s",
+                |data| data.result.throughput_ops_sec.as_ref().map(|x| x / 1000.0),
+            ),
+            (
+                ready_entries.clone(),
+                settings,
+                latency_dir.join(format!("{experiment_name}-read.pdf")),
+                "latency",
+                "ms",
+                |data| data.result.read.as_ref().map(|x| x.p99_latency_us / 1000.0),
+            ),
+            (
+                ready_entries.clone(),
+                settings,
+                latency_dir.join(format!("{experiment_name}-update.pdf")),
+                "latency",
+                "ms",
+                |data| {
+                    data.result
+                        .update
+                        .as_ref()
+                        .map(|x| x.p99_latency_us / 1000.0)
+                },
+            ),
+            (
+                ready_entries.clone(),
+                settings,
+                power_dir.join(format!("{experiment_name}-cpu.pdf")),
+                "power",
+                "W",
+                |data| data.cpu_power.benchmark.power,
+            ),
+            (
+                ready_entries.clone(),
+                settings,
+                power_dir.join(format!("{experiment_name}-ssd.pdf")),
+                "power",
+                "W",
+                |data| data.ssd_power.benchmark.power,
+            ),
+        ];
+
+        let results = plot_jobs
+            .into_par_iter()
+            .map(|x| self.bar_plot(x.0, x.1, x.2, x.3, x.4, x.5))
+            .collect::<Vec<_>>();
+        for item in results {
+            item?;
+        }
+
         self.efficiency(ready_entries.clone(), settings, &efficiency_dir)
             .await?;
         Ok(())
@@ -307,18 +325,13 @@ impl YcsbBasic {
                     item.info.power_state
                 } as usize;
 
+                let throughput = item.result.throughput_ops_sec.as_ref().unwrap() / 1000.0;
                 (
                     x,
                     y,
-                    item.result.throughput_ops_sec.as_ref().unwrap()
-                        / (item.ssd_power.overall.energy.unwrap()
-                            + item.cpu_power.overall.energy.unwrap()),
-                    item.result.throughput_ops_sec.as_ref().unwrap()
-                        / (item.ssd_power.benchmark.energy.unwrap()
-                            + item.cpu_power.benchmark.energy.unwrap()),
-                    item.result.throughput_ops_sec.as_ref().unwrap()
-                        / (item.ssd_power.unmount.energy.unwrap()
-                            + item.cpu_power.unmount.energy.unwrap()),
+                    throughput / item.ssd_power.overall.power.unwrap(),
+                    throughput / item.ssd_power.benchmark.power.unwrap(),
+                    throughput / item.ssd_power.unmount.power.unwrap(),
                 )
             })
             .collect::<Vec<_>>();
@@ -352,21 +365,21 @@ impl YcsbBasic {
             (
                 plot_path.join(format!("{}-iops-j-overall.pdf", &experiment_name)),
                 iops_j_overall,
-                "IOPS/J",
+                "kIOPS/J",
                 "overall",
                 false,
             ),
             (
                 plot_path.join(format!("{}-iops-j-benchmark.pdf", &experiment_name)),
                 iops_j_benchmark,
-                "IOPS/J",
+                "kIOPS/J",
                 "benchmark",
                 false,
             ),
             (
                 plot_path.join(format!("{}-iops-j-unmount.pdf", &experiment_name)),
                 iops_j_unmount,
-                "IOPS/J",
+                "kIOPS/J",
                 "unmount",
                 false,
             ),
@@ -472,7 +485,7 @@ impl Plot for YcsbPowerTime {
         create_dir_all(&inner_dir).await?;
         create_dir_all(inner_dir.join("plot_data")).await?;
         let results = entries
-            .into_iter()
+            .into_par_iter()
             .map(|data| self.ycsb_time(data_path.join(data.0.clone()), &inner_dir, &data.1))
             .collect::<Vec<_>>();
         for item in results {
@@ -495,7 +508,7 @@ impl YcsbPowerTime {
 
         let trace_file = data_path.join("trace.out");
         if trace_file.exists() {
-            let trace = parse_trace(&std::fs::read_to_string(&trace_file)?, &config.fs)?;
+            let trace = parse_trace(&std::fs::File::open(&trace_file)?, &config.fs)?;
             write_csv(
                 &plot_path.join("plot_data").join(format!("{name}.csv")),
                 &trace,
@@ -503,24 +516,17 @@ impl YcsbPowerTime {
         }
 
         let mut args = vec![
-            "plots/ycsb_time.py",
-            "--plot_dir",
-            plot_path.to_str().unwrap(),
-            "--results_dir",
-            data_path.to_str().unwrap(),
-            "--name",
-            &name,
+            ("--plot_dir", plot_path.to_str().unwrap()),
+            ("--results_dir", data_path.to_str().unwrap()),
+            ("--name", &name),
         ]
         .into_iter()
-        .map(|x| x.to_owned())
+        .map(|x| (x.0.to_owned(), x.1.to_owned()))
         .collect::<Vec<_>>();
-        debug!("{}", args.join(" "));
         if let Some(offset) = &self.offset {
-            args.push("--offset".to_owned());
-            args.push(offset.to_string());
+            args.push(("--offset".to_owned(), offset.to_string()));
         }
-        let mut child = std::process::Command::new("python3").args(args).spawn()?;
-        child.wait()?;
+        plot_python("ycsb_time", &args)?;
         Ok(())
     }
 }

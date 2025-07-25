@@ -5,6 +5,7 @@ use std::{
 };
 
 use common::{
+    MB_TO_MIB,
     bench::BenchmarkInfo,
     config::{Config, Settings},
     plot::{Plot, PlotType},
@@ -105,20 +106,20 @@ impl Plot for MlperfBasic {
                 let (_, rapl_overall, _) = calculate_sectioned::<_, 0>(
                     None,
                     &rapl,
-                    "Total",
-                    0.0,
-                    200.0,
+                    &["Total"],
+                    &[(0.0, 200.0)],
                     power_energy_calculator,
+                    None,
                 )
                 .context("Calculate rapl means")
                 .unwrap();
                 let (_, ps3_overall, _times) = calculate_sectioned::<_, 0>(
                     None,
                     &powersensor3,
-                    "Total",
-                    0.0,
-                    8.5,
+                    &["Total"],
+                    &[(0.0, 8.5)],
                     power_energy_calculator,
+                    None,
                 )
                 .context("Calculate powersensor3 means")
                 .unwrap();
@@ -135,43 +136,71 @@ impl Plot for MlperfBasic {
 
         let experiment_name = ready_entries[0].info.name.clone();
         let throughput_dir = plot_path.join("throughput");
-        create_dir_all(&throughput_dir).await?;
-        // self.bar_plot(
-        //     ready_entries.clone(),
-        //     settings,
-        //     throughput_dir.join(format!("{experiment_name}-checkpoint.pdf")),
-        //     "throughput",
-        //     "MB/s",
-        //     |data| data.result.metric.save_checkpoint_io_mean_gb_per_second * 1000.0,
-        // )?;
-
-        self.bar_plot(
-            ready_entries.clone(),
-            settings,
-            throughput_dir.join(format!("{experiment_name}-train.pdf")),
-            "throughput",
-            "MB/s",
-            |data| data.result.metric.train_io_mean_mb_per_second,
-        )?;
-        self.bar_plot(
-            ready_entries.clone(),
-            settings,
-            throughput_dir.join(format!("{experiment_name}-samples.pdf")),
-            "throughput",
-            "samples/s",
-            |data| data.result.metric.train_throughput_mean_samples_per_second,
-        )?;
-        self.bar_plot(
-            ready_entries.clone(),
-            settings,
-            throughput_dir.join(format!("{experiment_name}-utilization.pdf")),
-            "throughput",
-            "%",
-            |data| data.result.metric.train_au_mean_percentage,
-        )?;
-
         let efficiency_dir = plot_path.join("efficiency");
-        create_dir_all(&efficiency_dir).await?;
+        let power_dir = plot_path.join("power");
+        let dirs = [&power_dir, &throughput_dir, &efficiency_dir];
+        for dir in join_all(dirs.iter().map(create_dir_all)).await.into_iter() {
+            dir?;
+        }
+
+        let plot_jobs: Vec<(
+            Vec<PlotEntry>,
+            &Settings,
+            PathBuf,
+            &str,
+            &str,
+            fn(&PlotEntry) -> f64,
+        )> = vec![
+            (
+                ready_entries.clone(),
+                settings,
+                throughput_dir.join(format!("{experiment_name}-train.pdf")),
+                "throughput",
+                "MiB/s",
+                |data| data.result.metric.train_io_mean_mb_per_second * MB_TO_MIB,
+            ),
+            (
+                ready_entries.clone(),
+                settings,
+                throughput_dir.join(format!("{experiment_name}-samples.pdf")),
+                "throughput",
+                "samples/s",
+                |data| data.result.metric.train_throughput_mean_samples_per_second,
+            ),
+            (
+                ready_entries.clone(),
+                settings,
+                throughput_dir.join(format!("{experiment_name}-utilization.pdf")),
+                "throughput",
+                "%",
+                |data| data.result.metric.train_au_mean_percentage,
+            ),
+            (
+                ready_entries.clone(),
+                settings,
+                power_dir.join(format!("{experiment_name}-cpu.pdf")),
+                "power",
+                "%",
+                |data| data.cpu_power.power.unwrap(),
+            ),
+            (
+                ready_entries.clone(),
+                settings,
+                power_dir.join(format!("{experiment_name}-ssd.pdf")),
+                "power",
+                "%",
+                |data| data.ssd_power.power.unwrap(),
+            ),
+        ];
+
+        let results = plot_jobs
+            .into_par_iter()
+            .map(|x| self.bar_plot(x.0, x.1, x.2, x.3, x.4, x.5))
+            .collect::<Vec<_>>();
+        for item in results {
+            item?;
+        }
+
         self.efficiency(ready_entries.clone(), settings, &efficiency_dir)
             .await?;
         Ok(())
@@ -251,13 +280,14 @@ impl MlperfBasic {
         let (order, labels) = self.get_order_labels(ready_entries.clone());
         let mut iops_j = vec![vec![0f64; num_power_states]; order.len()];
         let mut bytes_j = iops_j.clone();
+        let mut bytes_j_ssd = iops_j.clone();
         let experiment_name = ready_entries[0].info.name.clone();
 
         let results = ready_entries
             .par_iter()
             .map(|item| {
                 let ops = item.result.metric.train_throughput_mean_samples_per_second;
-                let throughput = item.result.metric.train_io_mean_mb_per_second;
+                let throughput = item.result.metric.train_io_mean_mb_per_second * MB_TO_MIB;
                 let x = *order
                     .get(&format!("{}", item.args.n_accelerators[0],))
                     .unwrap();
@@ -267,8 +297,15 @@ impl MlperfBasic {
                     item.info.power_state
                 } as usize;
 
-                let power = item.ssd_power.power.unwrap() + item.cpu_power.power.unwrap();
-                (x, y, ops / power, throughput / power)
+                let ssd_power = item.ssd_power.power.unwrap();
+                let cpu_power = item.cpu_power.power.unwrap();
+                (
+                    x,
+                    y,
+                    ops / (ssd_power + cpu_power),
+                    throughput / (ssd_power + cpu_power),
+                    throughput / ssd_power,
+                )
             })
             .collect::<Vec<_>>();
         for item in results {
@@ -276,6 +313,7 @@ impl MlperfBasic {
             let y = item.1;
             iops_j[x][y] = item.2;
             bytes_j[x][y] = item.3;
+            bytes_j_ssd[x][y] = item.4;
         }
 
         let plot_data_dir = plot_path.join("plot_data");
@@ -305,9 +343,16 @@ impl MlperfBasic {
                 false,
             ),
             (
-                plot_path.join(format!("{}-bytes-j.pdf", &experiment_name)),
+                plot_path.join(format!("{}-bytes-j+cpu.pdf", &experiment_name)),
                 bytes_j,
-                "Bytes/J",
+                "MiB/J",
+                "overall",
+                false,
+            ),
+            (
+                plot_path.join(format!("{}-bytes-j.pdf", &experiment_name)),
+                bytes_j_ssd,
+                "MiB/J",
                 "overall",
                 false,
             ),
@@ -422,24 +467,17 @@ impl MlperfPowerTime {
         );
 
         let mut args = vec![
-            "plots/mlperf_time.py",
-            "--plot_dir",
-            plot_path.to_str().unwrap(),
-            "--results_dir",
-            data_path.to_str().unwrap(),
-            "--name",
-            &name,
+            ("--plot_dir", plot_path.to_str().unwrap()),
+            ("--results_dir", data_path.to_str().unwrap()),
+            ("--name", &name),
         ]
         .into_iter()
-        .map(|x| x.to_owned())
+        .map(|x| (x.0.to_owned(), x.1.to_owned()))
         .collect::<Vec<_>>();
-        debug!("{}", args.join(" "));
         if let Some(offset) = &self.offset {
-            args.push("--offset".to_owned());
-            args.push(offset.to_string());
+            args.push(("--offset".to_owned(), offset.to_string()));
         }
-        let mut child = std::process::Command::new("python3").args(args).spawn()?;
-        child.wait()?;
+        plot_python("mlperf_time", &args)?;
         Ok(())
     }
 }

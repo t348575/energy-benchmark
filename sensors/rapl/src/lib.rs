@@ -8,9 +8,9 @@ use std::{
 
 use common::{
     sensor::{Sensor, SensorArgs, SensorReply, SensorRequest},
-    util::sensor_reader,
+    util::{SensorError, sensor_reader},
 };
-use eyre::{ContextCompat, Result, bail};
+use eyre::{Context, ContextCompat, Result};
 use flume::{Receiver, Sender};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -149,9 +149,13 @@ impl Sensor for Rapl {
                 "rapl",
                 args,
                 init_rapl,
-                |args: &RaplConfig, sensor: &Arc<Mutex<InternalRapl>>, _, last_time| -> std::pin::Pin<Box<dyn Future<Output = Result<Vec<f64>>> + Send>> {
-                    Box::pin(read_rapl(args.clone(), sensor.clone(), last_time))
-                },
+                |args: &RaplConfig,
+                 sensor: &Arc<Mutex<InternalRapl>>,
+                 _,
+                 last_time|
+                 -> std::pin::Pin<
+                    Box<dyn Future<Output = Result<Vec<f64>, SensorError>> + Send>,
+                > { Box::pin(read_rapl(args.clone(), sensor.clone(), last_time)) },
             )
             .await
             {
@@ -180,13 +184,17 @@ async fn read_rapl(
     _: RaplConfig,
     sensor: Arc<Mutex<InternalRapl>>,
     last_time: Instant,
-) -> Result<Vec<f64>> {
+) -> Result<Vec<f64>, SensorError> {
     let start_time = Instant::now();
     let mut sensor = sensor.lock().await;
     let mut start = vec![(0, 0); sensor.size()];
     let mut end = vec![(0, 0); sensor.size()];
     let sensor_read_time = Instant::now();
-    sensor.read(&mut start).await?;
+    sensor
+        .read(&mut start)
+        .await
+        .context("Read data")
+        .map_err(SensorError::MajorFailure)?;
     async_io::Timer::after(Duration::from_micros(min(
         1000 - start_time.elapsed().as_micros() as u64
             - (last_time.elapsed().as_micros() as u64).saturating_sub(1000),
@@ -194,11 +202,15 @@ async fn read_rapl(
     )))
     .await;
     let sensor_end_time = sensor_read_time.elapsed().as_micros() as u64;
-    sensor.read(&mut end).await?;
+    sensor
+        .read(&mut end)
+        .await
+        .context("Read data")
+        .map_err(SensorError::MajorFailure)?;
 
     let no_changes = start.iter().zip(end.iter()).any(|(x, y)| x.0 >= y.0);
     if no_changes {
-        bail!("No power changes");
+        return Err(SensorError::NoChanges);
     }
 
     let mut readings = start

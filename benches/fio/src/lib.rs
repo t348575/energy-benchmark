@@ -1,16 +1,16 @@
-use std::path::Path;
+use std::{collections::HashMap, path::Path};
 
 use common::{
     bench::{Bench, BenchArgs, Cmd, CmdsResult},
     config::{Config, Settings},
-    util::{find_outliers_by_stddev, get_mean_power, simple_command_with_output_no_dir},
+    util::{
+        get_pcie_address, parse_time, simple_command_with_output, simple_command_with_output_no_dir,
+    },
 };
-use eyre::{Context, ContextCompat, Result};
+use eyre::{ContextCompat, Result, bail};
 use itertools::iproduct;
-use regex::Regex;
-use result::FioResult;
 use serde::{Deserialize, Serialize};
-use tokio::fs::read_to_string;
+use tokio::fs::{read_to_string, write};
 use tracing::debug;
 
 pub mod result;
@@ -34,6 +34,7 @@ pub struct Fio {
 pub struct FioConfig {
     pub program: Option<String>,
     pub log_avg: Option<usize>,
+    pub spdk_path: Option<String>,
 }
 
 #[typetag::serde]
@@ -109,6 +110,11 @@ impl Bench for Fio {
         let bench_args = bench_args
             .downcast_ref::<FioConfig>()
             .context("Invalid bench args, expected args for fio")?;
+        if self.io_engines.iter().find(|x| x.eq(&"spdk")).is_some()
+            && bench_args.spdk_path.is_none()
+        {
+            bail!("Missing SPDK path");
+        }
 
         let jobs = self.num_jobs.clone();
         let jobs_vec = jobs.unwrap_or(vec![1]);
@@ -135,6 +141,16 @@ impl Bench for Fio {
             num_jobs: Some(vec![job]),
         })
         .map(|bench| {
+            let device = if bench.io_engines[0].eq("spdk") {
+                let pcie_address = get_pcie_address(&settings.device)
+                    .context("Get drive PCIe address")
+                    .unwrap()
+                    .replace(":", ".");
+                format!("trtype=PCIe traddr={pcie_address} ns=1")
+            } else {
+                settings.device.clone()
+            };
+
             let mut args = vec![
                 "--name",
                 "--filename",
@@ -147,7 +163,7 @@ impl Bench for Fio {
             .into_iter()
             .zip(vec![
                 name.to_owned(),
-                settings.device.clone(),
+                device.clone(),
                 int(bench.direct).to_string(),
                 bench.request_sizes[0].clone(),
                 bench.io_engines[0].clone(),
@@ -215,33 +231,82 @@ impl Bench for Fio {
         args.push(format!("--write_lat_log={final_path_str}/log"));
     }
 
-    async fn check_results(&self, results_path: &Path, dirs: &[String]) -> Result<Vec<usize>> {
-        let mut items = Vec::new();
-        for item in dirs {
-            let data: FioResult = serde_json::from_str(
-                &read_to_string(results_path.join(item).join("results.json"))
-                    .await
-                    .context("Reading results.json")?,
-            )?;
-            let mean_bw = data
-                .jobs
-                .iter()
-                .map(|x| x.read.bw_mean + x.write.bw_mean)
-                .collect::<Vec<_>>();
-            items.push(mean_bw.iter().sum::<f64>() / mean_bw.len() as f64);
+    fn add_env(&self, bench_args: &dyn BenchArgs) -> Result<HashMap<String, String>> {
+        if self.io_engines[0].eq("spdk") {
+            let args = bench_args.downcast_ref::<FioConfig>().unwrap();
+            let spdk_path = args.spdk_path.as_ref().context("Missing SPDK path")?;
+            let spdk_path = Path::new(spdk_path);
+            return Ok(HashMap::from([(
+                "LD_PRELOAD".to_owned(),
+                spdk_path
+                    .join("build/fio/spdk_nvme")
+                    .to_str()
+                    .unwrap()
+                    .to_owned(),
+            )]));
+        }
+        return Ok(HashMap::new());
+    }
+
+    fn requires_custom_power_state_setter(&self) -> bool {
+        self.io_engines[0].eq("spdk")
+    }
+
+    async fn experiment_init(
+        &self,
+        _data_dir: &Path,
+        settings: &Settings,
+        bench_args: &dyn BenchArgs,
+        _last_experiment: &Option<Box<dyn Bench>>,
+    ) -> Result<()> {
+        if self.io_engines[0].ne("spdk") {
+            return Ok(());
         }
 
-        let mut outliers = find_outliers_by_stddev(&items, 10000.0);
-        debug!("BW: {items:?}");
+        let args = bench_args.downcast_ref::<FioConfig>().unwrap();
+        let spdk_dir = args.spdk_path.as_ref().context("Missing SPDK path")?;
+        let spdk_dir = Path::new(spdk_dir);
+        let pcie_device = get_pcie_address(&settings.device).context("Get drive PCIe address")?;
+        write("spdk_device", &pcie_device).await?;
+        let mut env = HashMap::from([("PCI_ALLOWED".to_owned(), pcie_device)]);
 
-        for (idx, item) in dirs.iter().enumerate() {
-            // TODO: check if sensor exists
-            let data = read_to_string(results_path.join(item).join("rapl.csv")).await?;
-            if get_mean_power(&data, "Total").is_err() && !outliers.contains(&idx) {
-                outliers.push(idx);
-            }
+        if let Some(numa) = &settings.numa {
+            env.insert(
+                "HUGENODE".to_owned(),
+                format!("'nodes_hp[{}]=4096", numa.cpunodebind),
+            );
+        } else {
+            env.insert("HUGEMEM".to_owned(), "4096".to_owned());
         }
-        Ok(outliers)
+
+        simple_command_with_output("bash", &["./scripts/setup.sh", "config"], spdk_dir, &env)
+            .await?;
+        Ok(())
+    }
+
+    async fn post_experiment(
+        &self,
+        _data_dir: &Path,
+        _final_results_dir: &Path,
+        _settings: &Settings,
+        bench_args: &dyn BenchArgs,
+    ) -> Result<()> {
+        if self.io_engines[0].ne("spdk") {
+            return Ok(());
+        }
+
+        let args = bench_args.downcast_ref::<FioConfig>().unwrap();
+        let spdk_dir = args.spdk_path.as_ref().context("Missing SPDK path")?;
+        let spdk_dir = Path::new(spdk_dir);
+        let pcie_device = read_to_string("spdk_device").await?;
+        simple_command_with_output(
+            "bash",
+            &["./scripts/setup.sh", "reset"],
+            spdk_dir,
+            &HashMap::from([("PCI_ALLOWED".to_owned(), pcie_device.trim().to_owned())]),
+        )
+        .await?;
+        Ok(())
     }
 }
 
@@ -314,19 +379,4 @@ impl FioTestTypeConfig {
         cmds[0] = format!("--rw={}", cmds[0]);
         cmds
     }
-}
-
-fn parse_time(time: &str) -> Result<usize> {
-    let re = Regex::new(r"^(\d+)([smh])$").ok().unwrap();
-    let caps = re.captures(time).context("Invalid time format")?;
-
-    let value: usize = caps.get(1).unwrap().as_str().parse().ok().unwrap();
-    let unit = caps.get(2).unwrap().as_str();
-
-    Ok(match unit {
-        "s" => value * 1000,
-        "m" => value * 60 * 1000,
-        "h" => value * 60 * 60 * 1000,
-        _ => value * 1000,
-    })
 }

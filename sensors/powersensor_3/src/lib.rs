@@ -22,10 +22,10 @@ use std::{
 
 use common::{
     sensor::{Sensor, SensorArgs, SensorReply, SensorRequest},
-    util::sensor_reader,
+    util::{SensorError, sensor_reader},
 };
 use cxx::UniquePtr;
-use eyre::{ContextCompat, Result};
+use eyre::{Context, ContextCompat, Result};
 use flume::{Receiver, Sender};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -115,7 +115,13 @@ impl Sensor for Powersensor3 {
                 "powersensor3",
                 args,
                 init_powersensor3,
-                |args: &Powersensor3Config, sensor: &Arc<Mutex<InternalPowersensor3>>, _, last_time| -> std::pin::Pin<Box<dyn Future<Output = Result<Vec<f64>>> + Send>> {
+                |args: &Powersensor3Config,
+                 sensor: &Arc<Mutex<InternalPowersensor3>>,
+                 _,
+                 last_time|
+                 -> std::pin::Pin<
+                    Box<dyn Future<Output = Result<Vec<f64>, SensorError>> + Send>,
+                > {
                     Box::pin(read_powersensor3(args.clone(), sensor.clone(), last_time))
                 },
             )
@@ -150,17 +156,23 @@ async fn read_powersensor3(
     args: Powersensor3Config,
     sensor: Arc<Mutex<InternalPowersensor3>>,
     last_time: Instant,
-) -> Result<Vec<f64>> {
+) -> Result<Vec<f64>, SensorError> {
     let sensor = sensor.lock().await;
     let start_time = Instant::now();
-    let start = sensor.read()?;
+    let start = sensor
+        .read()
+        .context("Read sensor")
+        .map_err(SensorError::MajorFailure)?;
     async_io::Timer::after(Duration::from_micros(min(
         1000 - start_time.elapsed().as_micros() as u64
             - (last_time.elapsed().as_micros() as u64).saturating_sub(1000),
         1000,
     )))
     .await;
-    let end = sensor.read()?;
+    let end = sensor
+        .read()
+        .context("Read sensor")
+        .map_err(SensorError::MajorFailure)?;
 
     let readings = args
         .indexes

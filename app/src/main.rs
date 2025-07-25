@@ -33,6 +33,9 @@ enum Commands {
     Bench {
         #[arg(short, long, default_value = "config.yaml")]
         config_file: String,
+        /// Do not generate plots
+        #[arg(long, default_value_t = false)]
+        skip_plot: bool,
     },
     /// Generate plots for benchmarks
     Plot {
@@ -87,8 +90,11 @@ async fn main() -> Result<()> {
     create_dir_all("results").await?;
     match args.command {
         Commands::Ls => list_benchmarks().await?,
-        Commands::Bench { config_file } => {
-            if let Err(err) = bench::run_benchmark(config_file, args.no_progress).await {
+        Commands::Bench {
+            config_file,
+            skip_plot,
+        } => {
+            if let Err(err) = bench::run_benchmark(config_file, args.no_progress, skip_plot).await {
                 error!("{err:#?}");
                 return Err(err);
             }

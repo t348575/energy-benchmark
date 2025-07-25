@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     path::{Path, PathBuf},
     time::SystemTime,
 };
@@ -172,7 +173,13 @@ impl Bench for TpccPostgres {
             format!("{}\n", context.clients.join("\n")),
         )
         .await?;
-        _ = simple_command_with_output(DOCKER, &["compose", "up", "-d"], &common_dir).await?;
+        _ = simple_command_with_output(
+            DOCKER,
+            &["compose", "up", "-d"],
+            &common_dir,
+            &HashMap::new(),
+        )
+        .await?;
 
         let helper = InitHelper {
             dir: common_dir.clone(),
@@ -235,8 +242,13 @@ impl Bench for TpccPostgres {
         settings: &Settings,
         _bench_args: &dyn BenchArgs,
     ) -> Result<()> {
-        _ = simple_command_with_output(DOCKER, &["compose", "down"], &data_dir.join("common_dir"))
-            .await?;
+        _ = simple_command_with_output(
+            DOCKER,
+            &["compose", "down"],
+            &data_dir.join("common_dir"),
+            &HashMap::new(),
+        )
+        .await?;
         let last_dir = find_last_created_dir(&data_dir.join("common_dir/logs/postgres")).await?;
         match last_dir {
             Some(results) => {
@@ -267,7 +279,7 @@ impl InitHelper {
         let mut args = vec!["compose", "cp"];
         args.push(from);
         args.push(to);
-        _ = simple_command_with_output(DOCKER, &args, &self.dir).await?;
+        _ = simple_command_with_output(DOCKER, &args, &self.dir, &HashMap::new()).await?;
         Ok(())
     }
 
@@ -275,7 +287,7 @@ impl InitHelper {
         let mut new_args = vec!["compose", "exec", container];
         new_args.extend(args);
         debug!("Running command: {new_args:?}");
-        _ = simple_command_with_output(DOCKER, &new_args, &self.dir).await?;
+        _ = simple_command_with_output(DOCKER, &new_args, &self.dir, &HashMap::new()).await?;
         Ok(())
     }
 }

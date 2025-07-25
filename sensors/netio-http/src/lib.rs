@@ -5,9 +5,9 @@ use std::{
 
 use common::{
     sensor::{Sensor, SensorArgs, SensorReply, SensorRequest},
-    util::sensor_reader,
+    util::{SensorError, sensor_reader},
 };
-use eyre::{ContextCompat, Result, bail};
+use eyre::{Context, ContextCompat, Result, eyre};
 use flume::{Receiver, Sender};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -52,9 +52,13 @@ impl Sensor for NetioHttp {
                 "netio-http",
                 args,
                 init_netio_http,
-                |args: &NetioHttpConfig, _, _, _| -> std::pin::Pin<Box<dyn Future<Output = Result<Vec<f64>>> + Send>> {
-                    Box::pin(read_netio_http(args.clone()))
-                },
+                |args: &NetioHttpConfig,
+                 _,
+                 _,
+                 _|
+                 -> std::pin::Pin<
+                    Box<dyn Future<Output = Result<Vec<f64>, SensorError>> + Send>,
+                > { Box::pin(read_netio_http(args.clone())) },
             )
             .await
             {
@@ -99,12 +103,24 @@ struct Output {
     load: f64,
 }
 
-async fn read_netio_http(args: NetioHttpConfig) -> Result<Vec<f64>> {
+async fn read_netio_http(args: NetioHttpConfig) -> Result<Vec<f64>, SensorError> {
     let start = Instant::now();
     let client = Client::new();
-    let res: NetioHttpResponse = client.get(&args.url).send().await?.json().await?;
+    let res: NetioHttpResponse = client
+        .get(&args.url)
+        .send()
+        .await
+        .context("Send request")
+        .map_err(SensorError::MajorFailure)?
+        .json()
+        .await
+        .context("Parse JSON")
+        .map_err(SensorError::MajorFailure)?;
     if res.outputs.len() < 2 {
-        bail!("Expected 2 outputs, got {}", res.outputs.len());
+        return Err(SensorError::MajorFailure(eyre!(
+            "Expected 2 outputs, got {}",
+            res.outputs.len()
+        )));
     }
     sleep(Duration::from_millis(min(
         500 - start.elapsed().as_millis() as u64,

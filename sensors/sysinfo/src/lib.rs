@@ -6,9 +6,9 @@ use std::{
 
 use common::{
     sensor::{Sensor, SensorArgs, SensorReply, SensorRequest},
-    util::sensor_reader,
+    util::{SensorError, sensor_reader},
 };
-use eyre::{ContextCompat, Result};
+use eyre::{Context, ContextCompat, Result};
 use flume::{Receiver, Sender};
 use serde::{Deserialize, Serialize};
 use sysinfo::{MemoryRefreshKind, Pid, ProcessRefreshKind, System};
@@ -58,10 +58,18 @@ impl Sensor for Sysinfo {
                 "sysinfo",
                 args,
                 init_sysinfo,
-                |args: &SysinfoConfig, sensor: &Arc<Mutex<System>>, request: &SensorRequest, _| -> std::pin::Pin<Box<dyn Future<Output = Result<Vec<f64>>> + Send>> {
+                |args: &SysinfoConfig,
+                 sensor: &Arc<Mutex<System>>,
+                 request: &SensorRequest,
+                 _|
+                 -> std::pin::Pin<
+                    Box<dyn Future<Output = Result<Vec<f64>, SensorError>> + Send>,
+                > {
                     match request {
-                        SensorRequest::StartRecording { pid, .. } => Box::pin(read_sysinfo(args.clone(), sensor.clone(), *pid)),
-                        _ => unreachable!()
+                        SensorRequest::StartRecording { pid, .. } => {
+                            Box::pin(read_sysinfo(args.clone(), sensor.clone(), *pid))
+                        }
+                        _ => unreachable!(),
                     }
                 },
             )
@@ -106,7 +114,7 @@ async fn read_sysinfo(
     config: SysinfoConfig,
     sensor: Arc<Mutex<System>>,
     pid: u32,
-) -> Result<Vec<f64>> {
+) -> Result<Vec<f64>, SensorError> {
     let start = Instant::now();
     let (cpu_freq, load, mem, fio_cpu, fio_mem) = spawn_blocking(move || {
         let mut sys = sensor.blocking_lock();
@@ -136,7 +144,9 @@ async fn read_sysinfo(
         drop(sys);
         (cpu_freq, load, mem, target_process_cpu, target_process_mem)
     })
-    .await?;
+    .await
+    .context("Fetching sysinfo")
+    .map_err(SensorError::MajorFailure)?;
 
     sleep(Duration::from_micros(min(
         (config.interval * 1000) - start.elapsed().as_micros() as u64,

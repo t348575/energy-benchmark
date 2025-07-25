@@ -8,7 +8,10 @@ use common::{
     bench::BenchmarkInfo,
     config::{Config, Settings},
     plot::{Plot, PlotType},
-    util::{get_mean_power, parse_data_size, plot_python},
+    util::{
+        SectionStats, calculate_sectioned, parse_data_size, parse_time, plot_python,
+        power_energy_calculator, sysinfo_average_calculator,
+    },
 };
 use eyre::{Context, ContextCompat, Result, bail};
 use fio::{
@@ -43,12 +46,11 @@ struct PlotEntry {
     result: FioResult,
     info: BenchmarkInfo,
     args: Fio,
-    ssd_power: f64,
-    cpu_power: f64,
-    dram_power: f64,
-    node_0_power: f64,
-    node_1_power: f64,
+    ssd_power: SectionStats,
+    cpu_power: SectionStats,
     plot: FioBasic,
+    load: f64,
+    freq: f64,
 }
 
 #[async_trait::async_trait]
@@ -123,41 +125,87 @@ impl Plot for FioBasic {
             serde_json::from_str(&data).context("Parse results.json")
         }
 
-        async fn read_powersensor3(folder: PathBuf) -> Result<String> {
-            Ok(read_to_string(folder.join("powersensor3.csv")).await?)
-        }
-
-        async fn read_rapl(folder: PathBuf) -> Result<String> {
-            Ok(read_to_string(folder.join("rapl.csv")).await?)
-        }
-
         let entries = groups
             .drain()
-            .map(|(_, (folder, info, plot))| async {
-                let results = read_results_json(data_path.join(folder.clone())).await;
-                let ps3 = read_powersensor3(data_path.join(folder.clone())).await;
-                let rapl = read_rapl(data_path.join(folder.clone())).await;
-                (results, ps3, rapl, folder, info, plot.clone())
+            .map(|(_, (folder, info, plot))| {
+                let specific_data_path = data_path.join(folder.clone());
+                async move {
+                    let results = read_results_json(specific_data_path.clone()).await;
+                    let ps3 = read_to_string(specific_data_path.join("powersensor3.csv")).await;
+                    let rapl = read_to_string(specific_data_path.join("rapl.csv")).await;
+                    let sysinfo = read_to_string(specific_data_path.join("sysinfo.csv")).await;
+                    (results, ps3, rapl, sysinfo, folder, info, plot.clone())
+                }
             })
             .collect::<Vec<_>>();
 
         let entries = join_all(entries).await;
-        let mut ready_entries = Vec::new();
-        for item in entries {
-            let (json, powersensor3, rapl, _, info, plot) = item;
-            let rapl = rapl?;
-            ready_entries.push(PlotEntry {
-                result: json?,
-                args: info.args.downcast_ref::<Fio>().unwrap().clone(),
-                info,
-                ssd_power: get_mean_power(&powersensor3?, "Total")?,
-                cpu_power: get_mean_power(&rapl, "Total")?,
-                dram_power: get_mean_power(&rapl, "dram-1")?,
-                node_0_power: get_mean_power(&rapl, "package-0")?,
-                node_1_power: get_mean_power(&rapl, "package-1")?,
-                plot: plot.clone(),
-            });
-        }
+        let ready_entries = entries
+            .into_par_iter()
+            .map(|item| {
+                let (json, powersensor3, rapl, sysinfo, _, info, plot) = item;
+                let rapl = rapl.context("Read rapl").unwrap();
+                let powersensor3 = powersensor3.context("Read powersensor3").unwrap();
+                let sysinfo = sysinfo.context("Read sysinfo").unwrap();
+                let fio_result = json
+                    .context(format!("Could not parse fio results.json for {info:#?}"))
+                    .unwrap();
+
+                let runtime = fio_result
+                    .jobs
+                    .iter()
+                    .max_by_key(|x| x.job_runtime)
+                    .unwrap()
+                    .job_runtime as usize;
+                let ramp_time = match &fio_result.jobs[0].job_options.ramp_time {
+                    Some(x) => parse_time(&x).context("Parse ramp time").unwrap(),
+                    None => 0,
+                };
+
+                let (_, rapl, _) = calculate_sectioned::<_, 0>(
+                    None,
+                    &rapl,
+                    &["Total"],
+                    &[(0.0, 200.0)],
+                    power_energy_calculator,
+                    Some(runtime + ramp_time),
+                )
+                .context("Calculate rapl means")
+                .unwrap();
+                let (_, ps3, _) = calculate_sectioned::<_, 0>(
+                    None,
+                    &powersensor3,
+                    &["Total"],
+                    &[(0.0, 8.5)],
+                    power_energy_calculator,
+                    Some(runtime + ramp_time),
+                )
+                .context("Calculate powersensor3 means")
+                .unwrap();
+
+                let (_, (freq, load), _) = calculate_sectioned::<_, 0>(
+                    None,
+                    &sysinfo,
+                    &["cpu-[0-9]{0,2}-freq", "cpu-[0-9]{0,2}-load"],
+                    &[(0.0, 3200.0), (0.0, 500.0)],
+                    sysinfo_average_calculator,
+                    Some(runtime + ramp_time),
+                )
+                .context("Calculate powersensor3 means")
+                .unwrap();
+
+                PlotEntry {
+                    result: fio_result,
+                    args: info.args.downcast_ref::<Fio>().unwrap().clone(),
+                    info,
+                    ssd_power: ps3,
+                    cpu_power: rapl,
+                    plot: plot.clone(),
+                    freq,
+                    load,
+                }
+            })
+            .collect::<Vec<_>>();
 
         let experiment_name = match &self.group {
             Some(group) => group.name.clone(),
@@ -173,84 +221,77 @@ impl Plot for FioBasic {
             dir?;
         }
 
-        let mut plot_jobs: Vec<(
+        let plot_jobs: Vec<(
             Vec<PlotEntry>,
             &Settings,
             PathBuf,
             &str,
             Option<&str>,
             fn(&PlotEntry) -> f64,
-        )> = Vec::new();
-        plot_jobs.push((
-            ready_entries.clone(),
-            settings,
-            throughput_dir.join(format!("{experiment_name}.pdf")),
-            "throughput",
-            None,
-            |data| {
-                data.result
-                    .jobs
-                    .iter()
-                    .map(|x| (x.read.bw_mean + x.write.bw_mean) / 1024.0)
-                    .sum::<f64>()
-            },
-        ));
-        plot_jobs.push((
-            ready_entries.clone(),
-            settings,
-            latency_dir.join(format!("{experiment_name}.pdf")),
-            "latency",
-            None,
-            |data| data.result.jobs.iter().map(mean_latency).sum::<f64>(),
-        ));
-        plot_jobs.push((
-            ready_entries.clone(),
-            settings,
-            latency_dir.join(format!("{experiment_name}-p99.pdf")),
-            "latency",
-            None,
-            |data| data.result.jobs.iter().map(mean_p99_latency).sum::<f64>(),
-        ));
-        plot_jobs.push((
-            ready_entries.clone(),
-            settings,
-            power_dir.join(format!("{experiment_name}-ssd.pdf")),
-            "power",
-            Some("SSD"),
-            |data| data.ssd_power,
-        ));
-        plot_jobs.push((
-            ready_entries.clone(),
-            settings,
-            power_dir.join(format!("{experiment_name}-cpu.pdf")),
-            "power",
-            Some("CPU + DRAM"),
-            |data| data.cpu_power,
-        ));
-        plot_jobs.push((
-            ready_entries.clone(),
-            settings,
-            power_dir.join(format!("{experiment_name}-dram.pdf")),
-            "power",
-            Some("DRAM 1"),
-            |data| data.dram_power,
-        ));
-        plot_jobs.push((
-            ready_entries.clone(),
-            settings,
-            power_dir.join(format!("{experiment_name}-node-0.pdf")),
-            "power",
-            Some("Node 0"),
-            |data| data.node_0_power,
-        ));
-        plot_jobs.push((
-            ready_entries.clone(),
-            settings,
-            power_dir.join(format!("{experiment_name}-node-1.pdf")),
-            "power",
-            Some("Node 1"),
-            |data| data.node_1_power,
-        ));
+        )> = vec![
+            (
+                ready_entries.clone(),
+                settings,
+                throughput_dir.join(format!("{experiment_name}.pdf")),
+                "throughput",
+                None,
+                |data| {
+                    data.result
+                        .jobs
+                        .iter()
+                        .map(|x| (x.read.bw_mean + x.write.bw_mean) / 1024.0)
+                        .sum::<f64>()
+                },
+            ),
+            (
+                ready_entries.clone(),
+                settings,
+                latency_dir.join(format!("{experiment_name}.pdf")),
+                "latency",
+                None,
+                |data| data.result.jobs.iter().map(mean_latency).sum::<f64>(),
+            ),
+            (
+                ready_entries.clone(),
+                settings,
+                latency_dir.join(format!("{experiment_name}-p99.pdf")),
+                "latency",
+                None,
+                |data| data.result.jobs.iter().map(mean_p99_latency).sum::<f64>(),
+            ),
+            (
+                ready_entries.clone(),
+                settings,
+                power_dir.join(format!("{experiment_name}-ssd.pdf")),
+                "power",
+                Some("SSD"),
+                |data| data.ssd_power.power.unwrap(),
+            ),
+            (
+                ready_entries.clone(),
+                settings,
+                power_dir.join(format!("{experiment_name}-cpu.pdf")),
+                "power",
+                Some("CPU"),
+                |data| data.cpu_power.power.unwrap(),
+            ),
+            (
+                ready_entries.clone(),
+                settings,
+                power_dir.join(format!("{experiment_name}-freq.pdf")),
+                "power",
+                Some("Freq"),
+                |data| data.freq,
+            ),
+            (
+                ready_entries.clone(),
+                settings,
+                power_dir.join(format!("{experiment_name}-load.pdf")),
+                "power",
+                Some("Load"),
+                |data| data.load,
+            ),
+        ];
 
         let results = plot_jobs
             .into_par_iter()
@@ -282,6 +323,7 @@ impl FioBasic {
         let mut iops_j_cpu = iops_j.clone();
         let mut edp = iops_j.clone();
         let mut edp_p99 = iops_j.clone();
+        let mut edp_total = iops_j.clone();
         let mut bytes_j = iops_j.clone();
         let mut bytes_j_cpu = iops_j.clone();
         let experiment_name = match &self.group {
@@ -302,8 +344,8 @@ impl FioBasic {
                     .result
                     .jobs
                     .iter()
-                    .map(|x| x.read.io_kbytes + x.write.io_kbytes)
-                    .sum::<i64>();
+                    .map(|x| x.read.bw_mean + x.write.bw_mean)
+                    .sum::<f64>();
                 let latency = item.result.jobs.iter().map(mean_latency).sum::<f64>()
                     / item.result.jobs.len() as f64;
                 let p99_latency = item.result.jobs.iter().map(mean_p99_latency).sum::<f64>();
@@ -317,12 +359,15 @@ impl FioBasic {
                 (
                     x,
                     y,
-                    (iops / 1000.0) / item.ssd_power,
-                    (iops / 1000.0) / (item.cpu_power + item.ssd_power),
-                    (bytes as f64 / 1024.0) / item.ssd_power,
-                    (bytes as f64 / 1024.0) / (item.cpu_power + item.ssd_power),
-                    item.ssd_power * latency.powi(2),
-                    item.ssd_power * p99_latency.powi(2),
+                    (iops) / item.ssd_power.power.unwrap(),
+                    (iops) / (item.cpu_power.power.unwrap() + item.ssd_power.power.unwrap()),
+                    (bytes / 1024.0) / item.ssd_power.power.unwrap(),
+                    (bytes / 1024.0)
+                        / (item.cpu_power.power.unwrap() + item.ssd_power.power.unwrap()),
+                    item.ssd_power.power.unwrap() * latency.powi(2),
+                    item.ssd_power.power.unwrap() * p99_latency.powi(2),
+                    (item.ssd_power.power.unwrap() + item.cpu_power.power.unwrap())
+                        * latency.powi(2),
                 )
             })
             .collect::<Vec<_>>();
@@ -335,6 +380,7 @@ impl FioBasic {
             bytes_j_cpu[x][y] = item.5;
             edp[x][y] = item.6;
             edp_p99[x][y] = item.7;
+            edp_total[x][y] = item.8;
         }
 
         let plot_data_dir = plot_path.join("plot_data");
@@ -359,13 +405,13 @@ impl FioBasic {
             (
                 plot_path.join(format!("{}-iops-j.pdf", &experiment_name)),
                 iops_j,
-                "KIOPS/J",
+                "IOPS/J",
                 false,
             ),
             (
                 plot_path.join(format!("{}-+cpu-iops-j.pdf", &experiment_name)),
                 iops_j_cpu,
-                "KIOPS/J",
+                "IOPS/J",
                 false,
             ),
             (
@@ -390,6 +436,12 @@ impl FioBasic {
                 plot_path.join(format!("{}-edp-p99.pdf", &experiment_name)),
                 edp_p99,
                 "P99 EDP",
+                true,
+            ),
+            (
+                plot_path.join(format!("{}-edp-total.pdf", &experiment_name)),
+                edp_total,
+                "EDP total",
                 true,
             ),
         ];
@@ -486,6 +538,7 @@ impl FioBasic {
             "request_sizes" => entry.args.request_sizes[0].clone(),
             "io_depths" => entry.args.io_depths[0].to_string(),
             "num_jobs" => entry.args.num_jobs.as_ref().unwrap()[0].to_string(),
+            "io_engine" => entry.args.io_engines[0].clone(),
             "extra_options" => {
                 if entry.plot.group.is_some() {
                     entry.plot.group.as_ref().unwrap().x_label.clone()
@@ -524,6 +577,20 @@ impl FioBasic {
                         .map(|(x, y)| (y.1.clone(), x))
                         .collect(),
                     data.map(|x| x.1.clone()).collect(),
+                ))
+            }
+            "io_engine" => {
+                let set = ready_entries
+                    .iter()
+                    .map(|x| x.args.io_engines[0].clone())
+                    .collect::<HashSet<_>>();
+                let data = set.iter().sorted();
+                Ok((
+                    data.clone()
+                        .enumerate()
+                        .map(|(x, y)| (y.to_string(), x))
+                        .collect(),
+                    data.map(|x| x.to_string()).collect(),
                 ))
             }
             "num_jobs" | "io_depths" => {
@@ -698,21 +765,18 @@ impl FioBwOverTime {
             "io_depths" => config.io_depths[0].to_string(),
             "num_jobs" => config.num_jobs.as_ref().unwrap()[0].to_string(),
             "extra_options" => config.extra_options.as_ref().unwrap()[0].join("-"),
+            "io_engine" => config.io_engines[0].to_owned(),
             _ => bail!("Unsupported plot variable {}", self.variable),
         };
         let name = format!("{}-{}-{}", info.name, info.power_state, variable);
-        let mut child = std::process::Command::new("python3")
-            .args([
-                "plots/fio_time.py",
-                "--plot_dir",
-                plot_path.to_str().unwrap(),
-                "--results_dir",
-                data_path.to_str().unwrap(),
-                "--name",
-                &name,
-            ])
-            .spawn()?;
-        child.wait()?;
+        plot_python(
+            "fio_time",
+            &[
+                ("--plot_dir", plot_path.to_str().unwrap()),
+                ("--results_dir", data_path.to_str().unwrap()),
+                ("--name", &name),
+            ],
+        )?;
         Ok(())
     }
 }
