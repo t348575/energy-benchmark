@@ -1,8 +1,12 @@
 import os
+import re
 import numpy as np
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
+
+from matplotlib import rcParams
+rcParams['font.size'] = 12
 
 sns.set_palette("colorblind")
 colors = ['#0173b2', '#de8f05', '#029e73', '#d55e00', '#cc78bc', '#ca9161', '#fbafe4', '#949494', '#ece133', '#56b4e9']
@@ -20,7 +24,7 @@ nvme_trace_agg_options = {
     'vfs_fsync': 'first'
 }
 
-def fill_clean(df, offset=0, trim=0, fillmode="ffill"):
+def fill_clean(df, offset=0, trim=0, fillmode="ffill", fillmodespread=1000):
     df = df.drop_duplicates(subset="time", keep=False)
     df.set_index("time", inplace=True)
 
@@ -41,7 +45,7 @@ def fill_clean(df, offset=0, trim=0, fillmode="ffill"):
         df = df.ffill()
     elif fillmode == "0s":
         df.fillna(0, inplace=True)
-    elif fillmode == "spread1000":
+    elif fillmode == "spread":
         num_cols = df.select_dtypes(include=[np.number]).columns.drop("time")
         for col in num_cols:
             buffer = []
@@ -50,7 +54,7 @@ def fill_clean(df, offset=0, trim=0, fillmode="ffill"):
             for v in df[col]:
                 if pd.notna(v) and v != 0:
                     current_val = v
-                    remaining = 1000
+                    remaining = fillmodespread
                     buffer.append(v)
                 else:
                     if remaining > 0 and current_val is not None:
@@ -74,3 +78,18 @@ def offset_trace_time(data, data_path):
             s = int(f.readline())
         data.loc[:, "time"] += s
     return data
+
+def parse_time_string(ramp_time_str):
+    match = re.match(r"(\d+)([smh])", ramp_time_str)
+    if not match:
+        return 0
+    value, unit = match.groups()
+    value = int(value)
+    if unit == "s":
+        return value * 1000
+    elif unit == "m":
+        return value * 60 * 1000
+    elif unit == "h":
+        return value * 60 * 60 * 1000
+    else:
+        return 0

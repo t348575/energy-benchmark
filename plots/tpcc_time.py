@@ -55,7 +55,7 @@ def gen_plots(plot_dir, results_dir, name, offset=0, trim=0, width=256):
     ps3 = common.fill_clean(ps3, offset=offset, trim=trim_from_end)
     rapl = common.fill_clean(rapl, offset=offset, trim=trim_from_end)
     sysinfo = common.fill_clean(sysinfo, offset=offset, trim=trim_from_end)
-    diskstat = common.fill_clean(diskstat, offset=offset, trim=trim_from_end)
+    diskstat = common.fill_clean(diskstat, offset=offset, trim=trim_from_end, fillmode="spread", fillmodespread=10)
 
     rapl = rapl[(rapl["Total"] < 300) & (rapl["Total"] >= 0)].copy()
     sysinfo["average_freq_node0"] = sysinfo[[f"cpu-{i}-freq" for i in range(10)]].max(axis=1)
@@ -110,6 +110,20 @@ def gen_plots(plot_dir, results_dir, name, offset=0, trim=0, width=256):
     for item in benchmark_value_items:
         benchmark_values[item[1]] = calculate_energy(item[0])
 
+    read_nonzero = diskstat["read"][diskstat["read"] > 0]
+    write_nonzero = diskstat["write"][diskstat["write"] > 0]
+    active_times = diskstat[(diskstat["read"] > 0) | (diskstat["write"] > 0)]["time"]
+    filtered_energy_df = ps3[ps3["time"].isin(active_times)]
+
+    benchmark_values["diskstat"] = {
+        "read": read_nonzero.mean().item() if not read_nonzero.empty else 0,
+        "write": write_nonzero.mean().item() if not write_nonzero.empty else 0
+    }
+
+    benchmark_values["ssd_power_filtered"] = {
+        "only_io": filtered_energy_df["Total"].mean().item(),
+        "above_idle": ps3[ps3["Total"] > 2]["Total"].mean().item()
+    }
 
     with open(os.path.join(base, f"{name}-stats.json"), "w") as f:
         f.write(json.dumps(benchmark_values, indent=4))

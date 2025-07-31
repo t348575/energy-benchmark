@@ -5,6 +5,9 @@ import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
 
+from matplotlib import rcParams
+rcParams['font.size'] = 12
+
 def gen_plots(matrix, filepath, col_labels, x_label, experiment_name, title, reverse=False):
     if reverse:
         r = "_r"
@@ -17,7 +20,7 @@ def gen_plots(matrix, filepath, col_labels, x_label, experiment_name, title, rev
         df,
         cmap=f"viridis{r}",
         annot=True,
-        fmt=".4f",
+        fmt=".2f",
         linewidths=0.5,
         linecolor="white"
     )

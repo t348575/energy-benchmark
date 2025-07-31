@@ -6,8 +6,8 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-def plotter(data, marker_data, filepath, label, offset, trim):
-    fig, ax = plt.subplots(figsize=(256, 6.5))
+def plotter(data, marker_data, filepath, label, offset, trim, width=256):
+    fig, ax = plt.subplots(figsize=(width, 6.5))
     ax.plot(data[0], data[1], color=common.colors[0], label=label)
     ax.set_ylabel(label)
     ax.tick_params(axis="y")
@@ -30,7 +30,7 @@ def calculate_energy(df, time="time", power="Total"):
     avg_power = (df[power][:-1].values + df[power][1:].values) / 2
     return (avg_power * dt).sum()
 
-def gen_plots(plot_dir, results_dir, name, offset=0, trim=0):
+def gen_plots(plot_dir, results_dir, name, offset=0, trim=0, width=256):
     ps3 = pd.read_csv(os.path.join(results_dir, "powersensor3.csv"), dtype="float32")
     rapl = pd.read_csv(os.path.join(results_dir, "rapl.csv"), dtype="float32")
     sysinfo = pd.read_csv(os.path.join(results_dir, "sysinfo.csv"), dtype="float32")
@@ -55,7 +55,7 @@ def gen_plots(plot_dir, results_dir, name, offset=0, trim=0):
     ps3 = common.fill_clean(ps3, offset=offset, trim=trim_from_end)
     rapl = common.fill_clean(rapl, offset=offset, trim=trim_from_end)
     sysinfo = common.fill_clean(sysinfo, offset=offset, trim=trim_from_end)
-    diskstat = common.fill_clean(diskstat, offset=offset, trim=trim_from_end)
+    diskstat = common.fill_clean(diskstat, offset=offset, trim=trim_from_end, fillmode="spread", fillmodespread=10)
 
     rapl = rapl[(rapl["Total"] < 300) & (rapl["Total"] >= 0)].copy()
     sysinfo["average_freq_node0"] = sysinfo[[f"cpu-{i}-freq" for i in range(10)]].max(axis=1)
@@ -81,15 +81,15 @@ def gen_plots(plot_dir, results_dir, name, offset=0, trim=0):
     base = os.path.join(plot_dir, name)
     os.makedirs(base, exist_ok=True)
 
-    plotter([ps3["time"], ps3["total_smoothed"]], marker_data, os.path.join(base, f"{name}-ssd-power.pdf"), "SSD power (Watts)", offset, trim_from_end)
-    plotter([rapl["time"], rapl["total_smoothed"]], marker_data, os.path.join(base, f"{name}-cpu-power.pdf"), "CPU power (Watts)", offset, trim_from_end)
-    plotter([diskstat["time"], diskstat["total"]], marker_data, os.path.join(base, f"{name}-diskstat.pdf"), "Iostat throughput (MiB/s)", offset, trim_from_end)
-    plotter([diskstat["time"], diskstat["read"]], marker_data, os.path.join(base, f"{name}-read-diskstat.pdf"), "Iostat throughput (MiB/s)", offset, trim_from_end)
-    plotter([diskstat["time"], diskstat["write"]], marker_data, os.path.join(base, f"{name}-write-diskstat.pdf"), "Iostat throughput (MiB/s)", offset, trim_from_end)
-    plotter([sysinfo["time"], sysinfo["average_freq_node0"]], marker_data, os.path.join(base, f"{name}-cpu-freq-0.pdf"), "CPU frequency (MHz)", offset, trim_from_end)
-    plotter([sysinfo["time"], sysinfo["average_load_node0"]], marker_data, os.path.join(base, f"{name}-cpu-load-0.pdf"), "CPU load", offset, trim_from_end)
-    plotter([sysinfo["time"], sysinfo["average_freq_node1"]], marker_data, os.path.join(base, f"{name}-cpu-freq-1.pdf"), "CPU frequency (MHz)", offset, trim_from_end)
-    plotter([sysinfo["time"], sysinfo["average_load_node1"]], marker_data, os.path.join(base, f"{name}-cpu-load-1.pdf"), "CPU load", offset, trim_from_end)
+    plotter([ps3["time"], ps3["total_smoothed"]], marker_data, os.path.join(base, f"{name}-ssd-power.pdf"), "SSD power (Watts)", offset, trim_from_end, width)
+    plotter([rapl["time"], rapl["total_smoothed"]], marker_data, os.path.join(base, f"{name}-cpu-power.pdf"), "CPU power (Watts)", offset, trim_from_end, width)
+    plotter([diskstat["time"], diskstat["total"]], marker_data, os.path.join(base, f"{name}-diskstat.pdf"), "Iostat throughput (MiB/s)", offset, trim_from_end, width)
+    plotter([diskstat["time"], diskstat["read"]], marker_data, os.path.join(base, f"{name}-read-diskstat.pdf"), "Iostat throughput (MiB/s)", offset, trim_from_end, width)
+    plotter([diskstat["time"], diskstat["write"]], marker_data, os.path.join(base, f"{name}-write-diskstat.pdf"), "Iostat throughput (MiB/s)", offset, trim_from_end, width)
+    plotter([sysinfo["time"], sysinfo["average_freq_node0"]], marker_data, os.path.join(base, f"{name}-cpu-freq-0.pdf"), "CPU frequency (MHz)", offset, trim_from_end, width)
+    plotter([sysinfo["time"], sysinfo["average_load_node0"]], marker_data, os.path.join(base, f"{name}-cpu-load-0.pdf"), "CPU load", offset, trim_from_end, width)
+    plotter([sysinfo["time"], sysinfo["average_freq_node1"]], marker_data, os.path.join(base, f"{name}-cpu-freq-1.pdf"), "CPU frequency (MHz)", offset, trim_from_end, width)
+    plotter([sysinfo["time"], sysinfo["average_load_node1"]], marker_data, os.path.join(base, f"{name}-cpu-load-1.pdf"), "CPU load", offset, trim_from_end, width)
 
     benchmark_values = {}
     benchmark_value_items = [
@@ -110,6 +110,20 @@ def gen_plots(plot_dir, results_dir, name, offset=0, trim=0):
     for item in benchmark_value_items:
         benchmark_values[item[1]] = calculate_energy(item[0])
 
+    read_nonzero = diskstat["read"][diskstat["read"] > 0]
+    write_nonzero = diskstat["write"][diskstat["write"] > 0]
+    active_times = diskstat[(diskstat["read"] > 0) | (diskstat["write"] > 0)]["time"]
+    filtered_energy_df = ps3[ps3["time"].isin(active_times)]
+
+    benchmark_values["diskstat"] = {
+        "read": read_nonzero.mean().item() if not read_nonzero.empty else 0,
+        "write": write_nonzero.mean().item() if not write_nonzero.empty else 0
+    }
+
+    benchmark_values["ssd_power_filtered"] = {
+        "only_io": filtered_energy_df["Total"].mean().item(),
+        "above_idle": ps3[ps3["Total"] > 2]["Total"].mean().item()
+    }
 
     with open(os.path.join(base, f"{name}-stats.json"), "w") as f:
         f.write(json.dumps(benchmark_values, indent=4))
@@ -122,6 +136,7 @@ if __name__ == "__main__":
     parser.add_argument("--name", type=str, required=True)
     parser.add_argument("--offset", type=int, required=False, default=0)
     parser.add_argument("--trim_end", type=int, required=False, default=0)
+    parser.add_argument("--width", type=int, required=False, default=256)
     args = parser.parse_args()
 
-    gen_plots(args.plot_dir, args.results_dir, args.name, args.offset, args.trim_end)
+    gen_plots(args.plot_dir, args.results_dir, args.name, args.offset, args.trim_end, args.width)

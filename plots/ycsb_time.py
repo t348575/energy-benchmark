@@ -6,27 +6,36 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-def plotter(data, marker_data, filepath, label, offset, trim, width=256):
+def plotter(data, marker_data, filepath, label, offset, trim, width=256, double_axis=None, label_left=None, title=None):
     fig, ax = plt.subplots(figsize=(width, 6.5))
-    ax.plot(data[0], data[1], color=common.colors[0], label=label)
-    ax.set_ylabel(label)
+    ax.plot(data[0], data[1], color=common.colors[0], label="Disk Throughput")
     ax.tick_params(axis="y")
     ax.set_ylim(bottom=0)
     ax.set_xlabel("Time (s)")
+    ax.set_ylabel(label)
 
     if marker_data is not None:
         for idx, row in marker_data.iterrows():
             if row["time"] - offset > 0 and row["time"] < trim:
                 ax.axvline((row["time"] - offset) / 1000, color=common.colors[idx + 1], label=row["marker_name"], linestyle="dashdot")
 
-    plt.legend()
-    plt.title(f"RocksDB workload A")
+    if double_axis is not None:
+        ax2 = ax.twinx()
+
+        ax2.plot(double_axis[0], double_axis[1], color=common.colors[1], label="SSD Power")
+        ax2.set_ylabel(label_left)
+        ax2.tick_params(axis="y")
+        ax2.set_xlim(left=0)
+        ax2.set_ylim(bottom=0)
+
+    plt.title(title if title is not None else f"YCSB")
     plt.tight_layout()
+    fig.legend(bbox_to_anchor=(0.96, 0.94), loc="upper right")
     plt.savefig(filepath, format="pdf")
     plt.close()
 
-def double_axis(data, left_axis, marker_data, filepath, label, label_left, offset, trim, title):
-    fig, ax1 = plt.subplots(figsize=(256, 6.5))
+def plot_trace(data, left_axis, marker_data, filepath, label, label_left, offset, trim, title, width=256):
+    fig, ax1 = plt.subplots(figsize=(width, 6.5))
     ax1.plot(data[0], data[1], color=common.colors[0], label=label)
     ax1.set_ylabel(label)
     ax1.tick_params(axis="y")
@@ -84,7 +93,7 @@ def gen_plots(plot_dir, results_dir, name, offset=0, trim=0, width=256):
         trace_data_all = common.offset_trace_time(trace_data_all, results_dir)
 
         if len(trace_data_all[trace_data_all["function"] == "read+76"]) > 0:
-            trace_data_read = common.fill_clean(trace_data_all[trace_data_all["function"] == "read+76"], fillmode="spread1000", offset=offset, trim=trim_from_end)
+            trace_data_read = common.fill_clean(trace_data_all[trace_data_all["function"] == "read+76"], fillmode="spread", fillmodespread=1000, offset=offset, trim=trim_from_end)
             if len (trace_data_read) > 0:
                 trace_graphs.append([trace_data_read["time"], trace_data_read["count"], "read I/O"])
         elif len(trace_data[trace_data["vfs_read"] == True]) > 0:
@@ -92,16 +101,16 @@ def gen_plots(plot_dir, results_dir, name, offset=0, trim=0, width=256):
             trace_data_read = trace_data_read[trace_data_read["is_nvme_call"] == True]
             if len(trace_data_read) > 0:
                 trace_data_read = common.offset_trace_time(trace_data_read, results_dir)
-                trace_data_read = common.fill_clean(trace_data_read, fillmode="spread1000", offset=offset, trim=trim_from_end)
+                trace_data_read = common.fill_clean(trace_data_read, fillmode="spread", fillmodespread=1000, offset=offset, trim=trim_from_end)
                 trace_graphs.append([trace_data_read["time"], trace_data_read["count"], "read I/O"])
 
         trace_data_write = None
         if len(trace_data_all[trace_data_all["function"] == "__write+79"]) > 0:
-            trace_data_write = common.fill_clean(trace_data_all[trace_data_all["function"] == "__write+79"], fillmode="spread1000", offset=offset, trim=trim_from_end)
+            trace_data_write = common.fill_clean(trace_data_all[trace_data_all["function"] == "__write+79"], fillmode="spread", fillmodespread=1000, offset=offset, trim=trim_from_end)
         elif len(trace_data[(trace_data["vfs_write"] == True) & (trace_data["is_nvme_call"] == True)]) > 0:
             trace_data_write = trace_data[trace_data["vfs_write"] == True].groupby(["time"], as_index=False).agg(common.nvme_trace_agg_options)
             trace_data_write = common.offset_trace_time(trace_data_write, results_dir)
-            trace_data_write = common.fill_clean(trace_data_write[trace_data_write["is_nvme_call"] == True], fillmode="spread1000", offset=offset, trim=trim_from_end)
+            trace_data_write = common.fill_clean(trace_data_write[trace_data_write["is_nvme_call"] == True], fillmode="spread", fillmodespread=1000, offset=offset, trim=trim_from_end)
 
         if trace_data_write is not None:
             trace_graphs.append([trace_data_write["time"], trace_data_write["count"], "write I/O"])
@@ -111,19 +120,19 @@ def gen_plots(plot_dir, results_dir, name, offset=0, trim=0, width=256):
         trace_data_vfs_fsync = trace_data[trace_data["vfs_fsync"] == True].groupby(["time"], as_index=False).agg(common.nvme_trace_agg_options)
 
         trace_data_fs_writepage = common.offset_trace_time(trace_data_fs_writepage, results_dir)
-        trace_data_fs_writepage = common.fill_clean(trace_data_fs_writepage, fillmode="spread1000", offset=offset, trim=trim_from_end)
+        trace_data_fs_writepage = common.fill_clean(trace_data_fs_writepage, fillmode="spread", fillmodespread=1000, offset=offset, trim=trim_from_end)
         if len(trace_data_fs_writepage) > 0:
             trace_graphs.append([trace_data_fs_writepage["time"], trace_data_fs_writepage["count"], "write page file"])
 
         trace_data_requeued_io = common.offset_trace_time(trace_data_requeued_io, results_dir)
         if len(trace_data_requeued_io[trace_data_requeued_io["is_nvme_call"] == True]) > 0:
-            trace_data_requeued_io = common.fill_clean(trace_data_requeued_io[trace_data_requeued_io["is_nvme_call"] == True], fillmode="spread1000", offset=offset, trim=trim_from_end)
+            trace_data_requeued_io = common.fill_clean(trace_data_requeued_io[trace_data_requeued_io["is_nvme_call"] == True], fillmode="spread", fillmodespread=1000, offset=offset, trim=trim_from_end)
             if len(trace_data_requeued_io) > 0:
                 trace_graphs.append([trace_data_requeued_io["time"], trace_data_requeued_io["count"], "requeue I/O"])
 
         if len(trace_data_vfs_fsync[trace_data_vfs_fsync["is_nvme_call"] == True]) > 0:
             trace_data_vfs_fsync = common.offset_trace_time(trace_data_vfs_fsync, results_dir)
-            trace_data_vfs_fsync = common.fill_clean(trace_data_vfs_fsync[trace_data_vfs_fsync["is_nvme_call"] == True], fillmode="spread1000", offset=offset, trim=trim_from_end)
+            trace_data_vfs_fsync = common.fill_clean(trace_data_vfs_fsync[trace_data_vfs_fsync["is_nvme_call"] == True], fillmode="spread", fillmodespread=1000, offset=offset, trim=trim_from_end)
             if len(trace_data_vfs_fsync) > 0:
                 trace_graphs.append([trace_data_vfs_fsync["time"], trace_data_vfs_fsync["count"], "fsync"])
 
@@ -131,11 +140,11 @@ def gen_plots(plot_dir, results_dir, name, offset=0, trim=0, width=256):
     diskstat["read"] = diskstat["read"] / 1048576
     diskstat["write"] = diskstat["write"] / 1048576
     diskstat["total"] = diskstat["read"] + diskstat["write"]
-    
+
     ps3 = common.fill_clean(ps3, offset=offset, trim=trim_from_end)
     rapl = common.fill_clean(rapl, offset=offset, trim=trim_from_end)
     sysinfo = common.fill_clean(sysinfo, offset=offset, trim=trim_from_end)
-    diskstat = common.fill_clean(diskstat, offset=offset, trim=trim_from_end)
+    diskstat = common.fill_clean(diskstat, offset=offset, trim=trim_from_end, fillmode="spread", fillmodespread=10)
 
     rapl = rapl[(rapl["Total"] < 300) & (rapl["Total"] >= 0)].copy()
     sysinfo["average_freq_node0"] = sysinfo[[f"cpu-{i}-freq" for i in range(10)]].max(axis=1)
@@ -161,8 +170,10 @@ def gen_plots(plot_dir, results_dir, name, offset=0, trim=0, width=256):
     base = os.path.join(plot_dir, name)
     os.makedirs(base, exist_ok=True)
     if trace_data_all is not None:
-        double_axis([diskstat["time"], diskstat["total"]], trace_graphs, marker_data, os.path.join(base, f"{name}-trace.pdf"),
-                    "Total throughput (MiB/s)", "Num. function calls", offset, trim_from_end, "Throughput & function traces vs. Time")
+        plot_trace([diskstat["time"], diskstat["total"]], trace_graphs, marker_data, os.path.join(base, f"{name}-trace.pdf"),
+                    "Total throughput (MiB/s)", "Num. function calls", offset, trim_from_end, "Throughput & function traces vs. Time", width)
+    plotter([diskstat["time"], diskstat["total"]], marker_data, os.path.join(base, f"{name}-bw-ssd.pdf"),
+                    "Total throughput (MiB/s)", offset, trim_from_end, width, double_axis=[ps3["time"], ps3["Total"]], label_left="Power (Watts)", title="YCSB workload F, 100m records, disk I/O subsection")
     plotter([ps3["time"], ps3["total_smoothed"]], marker_data, os.path.join(base, f"{name}-ssd-power.pdf"), "SSD power (Watts)", offset, trim_from_end, width)
     plotter([rapl["time"], rapl["total_smoothed"]], marker_data, os.path.join(base, f"{name}-cpu-power.pdf"), "CPU power (Watts)", offset, trim_from_end, width)
     plotter([diskstat["time"], diskstat["total"]], marker_data, os.path.join(base, f"{name}-diskstat.pdf"), "Iostat throughput (MiB/s)", offset, trim_from_end, width)
@@ -210,6 +221,15 @@ def gen_plots(plot_dir, results_dir, name, offset=0, trim=0, width=256):
     benchmark_values["times"] = {
         "bencmark": marker_data.iloc[0]["time"] / 1000,
         "unmount": (marker_data.iloc[1]["time"] - marker_data.iloc[0]["time"]) / 1000
+    }
+
+    subset_diskstat = diskstat[diskstat["time"] < marker_data.iloc[0]["time"] / 1000]
+    read_nonzero = subset_diskstat["read"][subset_diskstat["read"] > 0]
+    write_nonzero = subset_diskstat["write"][subset_diskstat["write"] > 0]
+
+    benchmark_values["diskstat"] = {
+        "read": read_nonzero.mean().item() if not read_nonzero.empty else 0,
+        "write": write_nonzero.mean().item() if not write_nonzero.empty else 0
     }
 
     with open(os.path.join(base, f"{name}-stats.json"), "w") as f:
