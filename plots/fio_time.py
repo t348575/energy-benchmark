@@ -75,7 +75,7 @@ def gen_plots(plot_dir, results_dir, name, offset=0, trim=0):
     ramp_time = max(0, ramp_time - offset)
     orig_rows = len(ps3)
     trim_from_end = orig_rows - trim
-    bw_log = common.fill_clean(bw_log, offset=offset, trim=trim_from_end, fillmode="0s")
+    bw_log = common.fill_clean(bw_log, offset=offset, trim=trim_from_end)
     ps3 = common.fill_clean(ps3, trim=trim_from_end, offset=offset)
     rapl = common.fill_clean(rapl, trim=trim_from_end, offset=offset)
     sysinfo = common.fill_clean(sysinfo, trim=trim_from_end, offset=offset)

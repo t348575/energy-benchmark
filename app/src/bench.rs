@@ -47,6 +47,10 @@ pub async fn run_benchmark(config_file: String, no_progress: bool, skip_plot: bo
         config.name
     );
 
+    if let Some(cpu_freq) = &config.settings.cpu_freq {
+        set_cpu_freq(cpu_freq.freq, cpu_freq.freq, "performance").await.context("Set CPU frequency")?;
+    }
+
     let progress = Progress::new(!no_progress, &config)?;
 
     let sensor_objects = default_sensors::SENSORS.get().unwrap().lock().await;
@@ -374,6 +378,12 @@ pub async fn run_benchmark(config_file: String, no_progress: bool, skip_plot: bo
         }
     }
 
+    if let Some(cpu_freq) = &config.settings.cpu_freq {
+        let min_cpu_freq = read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_min_freq").await?;
+        let max_cpu_freq = read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq").await?;
+        set_cpu_freq(max_cpu_freq.trim().parse()?, min_cpu_freq.trim().parse()?, &cpu_freq.default_governor).await?;
+    }
+
     debug!("Exiting");
     Ok(())
 }
@@ -553,4 +563,30 @@ impl Progress {
             s.pb.finish();
         }
     }
+}
+
+async fn set_cpu_freq(max_cpu_freq: usize, min_cpu_freq: usize, governor: &str) -> Result<()> {
+    let mut dir = tokio::fs::read_dir("/sys/devices/system/cpu/").await?;
+    let mut cpus = Vec::new();
+    while let Some(entry) = dir.next_entry().await? {
+        let file_name = entry.file_name();
+        let file_name_str = file_name.to_string_lossy();
+
+        if !file_name_str.starts_with("cpu") {
+            continue;
+        }
+        let cpu_index_str = &file_name_str[3..];
+        if cpu_index_str.is_empty() || !cpu_index_str.chars().all(|c| c.is_ascii_digit()) {
+            continue;
+        }
+        cpus.push(cpu_index_str.parse::<u32>()?);
+    }
+
+    for cpu in cpus {
+        let cpu = format!("/sys/devices/system/cpu/cpu{cpu}/cpufreq");
+        simple_command_with_output_no_dir("bash", &["-c", &format!(r#"echo {governor} | sudo tee {cpu}/scaling_governor"#)]).await?;
+        simple_command_with_output_no_dir("bash", &["-c", &format!(r#"echo {max_cpu_freq} | sudo tee {cpu}/scaling_max_freq"#)]).await?;
+        simple_command_with_output_no_dir("bash", &["-c", &format!(r#"echo {min_cpu_freq} | sudo tee {cpu}/scaling_min_freq"#)]).await?;
+    }
+    Ok(())
 }

@@ -24,6 +24,13 @@ pub struct Settings {
     pub nvme_cli_device: Option<String>,
     pub max_repeat: Option<usize>,
     pub should_trace: Option<bool>,
+    pub cpu_freq: Option<CpuFreq>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CpuFreq {
+    pub freq: usize,
+    pub default_governor: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
