@@ -1,18 +1,20 @@
 use std::{
     collections::{HashMap, HashSet},
-    fs::write,
     path::{Path, PathBuf},
 };
 
 use common::{
-    bench::BenchmarkInfo,
+    bench::{BenchInfo, BenchParams},
     config::{Config, Settings},
-    plot::{Plot, PlotType},
+    plot::{HeatmapJob, Plot, PlotType, collect_run_groups, ensure_plot_dirs, render_heatmaps},
     util::{
-        SectionStats, calculate_sectioned, parse_data_size, parse_time, plot_python,
-        power_energy_calculator, sysinfo_average_calculator,
+        BarChartKind, SectionStats, TimeSeriesAxis, TimeSeriesPlot, TimeSeriesSpec,
+        calculate_sectioned, make_power_state_bar_config, parse_data_size, parse_time,
+        plot_bar_chart, plot_time_series, power_energy_calculator, read_json_file,
+        sysinfo_average_calculator,
     },
 };
+use default_benches::BenchKind;
 use eyre::{Context, ContextCompat, Result, bail};
 use fio::{
     Fio,
@@ -23,7 +25,7 @@ use itertools::Itertools;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use tokio::fs::{create_dir_all, read_to_string};
+use tokio::fs::read_to_string;
 use tracing::debug;
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -44,7 +46,7 @@ pub struct Group {
 #[derive(Debug, Clone)]
 struct PlotEntry {
     result: FioResult,
-    info: BenchmarkInfo,
+    info: BenchParams,
     args: Fio,
     ssd_power: SectionStats,
     cpu_power: SectionStats,
@@ -57,7 +59,7 @@ struct PlotEntry {
 #[typetag::serde]
 impl Plot for FioBasic {
     fn required_sensors(&self) -> &'static [&'static str] {
-        &["Powersensor3", "Rapl"]
+        &["Powersensor3", "Rapl", "Sysinfo", "Diskstat"]
     }
 
     async fn plot(
@@ -66,7 +68,7 @@ impl Plot for FioBasic {
         data_path: &Path,
         plot_path: &Path,
         config_yaml: &Config,
-        info: &HashMap<String, BenchmarkInfo>,
+        bench_info: &BenchInfo,
         dirs: Vec<String>,
         settings: &Settings,
         completed_dirs: &mut Vec<String>,
@@ -79,7 +81,8 @@ impl Plot for FioBasic {
                 let r = Regex::new(&group.filter)?;
                 dirs.into_iter()
                     .filter(|x| {
-                        r.is_match(&info.get(x).unwrap().name) && !completed_dirs.contains(x)
+                        r.is_match(&bench_info.param_map.get(x).unwrap().name)
+                            && !completed_dirs.contains(x)
                     })
                     .collect()
             }
@@ -92,54 +95,55 @@ impl Plot for FioBasic {
         };
 
         debug!("Got {} dirs", dirs.len());
-        let mut groups = HashMap::new();
-        for run in dirs {
-            let item = info.get(&run).context("No info for run")?;
-            let key = (item.name.clone(), item.power_state, item.hash.clone());
-            if !groups.contains_key(&key) {
-                let plots = &config_yaml
-                    .benches
-                    .iter()
-                    .find(|x| x.name.eq(&item.name))
-                    .context("No config for run")?
-                    .plots;
-                let plot_obj = plots
-                    .as_ref()
-                    .context("No plots for run")?
-                    .iter()
-                    .find(|x| x.is::<FioBasic>())
-                    .unwrap()
-                    .downcast_ref::<FioBasic>()
-                    .unwrap();
-                completed_dirs.push(run.clone());
-                groups.insert(key, (run, item.clone(), plot_obj));
-            }
-        }
-
+        let groups = collect_run_groups(dirs, &bench_info.param_map, completed_dirs)?;
         if groups.is_empty() {
             return Ok(());
         }
 
-        async fn read_results_json(folder: PathBuf) -> Result<FioResult> {
-            let data = read_to_string(folder.join("results.json")).await?;
-            serde_json::from_str(&data).context("Parse results.json")
-        }
-
-        let entries = groups
-            .drain()
-            .map(|(_, (folder, info, plot))| {
-                let specific_data_path = data_path.join(folder.clone());
-                async move {
-                    let results = read_results_json(specific_data_path.clone()).await;
-                    let ps3 = read_to_string(specific_data_path.join("powersensor3.csv")).await;
-                    let rapl = read_to_string(specific_data_path.join("rapl.csv")).await;
-                    let sysinfo = read_to_string(specific_data_path.join("sysinfo.csv")).await;
-                    (results, ps3, rapl, sysinfo, folder, info, plot.clone())
-                }
+        let groups = groups
+            .into_iter()
+            .map(|group| {
+                let plots_cfg = config_yaml
+                    .benches
+                    .iter()
+                    .find(|x| x.name.eq(&group.info.name))
+                    .context("No config for run")?
+                    .plots
+                    .as_ref()
+                    .context("No plots for run")?;
+                let plot_obj = plots_cfg
+                    .iter()
+                    .find(|x| x.is::<FioBasic>())
+                    .unwrap()
+                    .downcast_ref::<FioBasic>()
+                    .unwrap()
+                    .clone();
+                Ok((group, plot_obj))
             })
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<_>>>()?;
 
-        let entries = join_all(entries).await;
+        let entries = join_all(groups.iter().map(|(group, plot)| {
+            let run_dir = data_path.join(&group.dir);
+            let plot_clone = plot.clone();
+            let info_clone = group.info.clone();
+            async move {
+                let results = read_json_file::<FioResult>(run_dir.join("results.json")).await;
+                let ps3 = read_to_string(run_dir.join("powersensor3.csv")).await;
+                let rapl = read_to_string(run_dir.join("rapl.csv")).await;
+                let sysinfo = read_to_string(run_dir.join("sysinfo.csv")).await;
+                (
+                    results,
+                    ps3,
+                    rapl,
+                    sysinfo,
+                    group.dir.clone(),
+                    info_clone,
+                    plot_clone,
+                )
+            }
+        }))
+        .await;
+
         let ready_entries = entries
             .into_par_iter()
             .map(|item| {
@@ -166,7 +170,7 @@ impl Plot for FioBasic {
                     None,
                     &rapl,
                     &["Total"],
-                    &[(0.0, 200.0)],
+                    &[(0.0, settings.cpu_max_power_watts)],
                     power_energy_calculator,
                     Some(runtime + ramp_time),
                 )
@@ -176,7 +180,7 @@ impl Plot for FioBasic {
                     None,
                     &powersensor3,
                     &["Total"],
-                    &[(0.0, 8.5)],
+                    &[(0.0, bench_info.device_power_states[0].0)],
                     power_energy_calculator,
                     Some(runtime + ramp_time),
                 )
@@ -186,12 +190,18 @@ impl Plot for FioBasic {
                 let (_, (freq, load), _) = calculate_sectioned::<_, 0>(
                     None,
                     &sysinfo,
-                    &["cpu-[0-9]{0,2}-freq", "cpu-[0-9]{0,2}-load"],
-                    &[(0.0, 3200.0), (0.0, 500.0)],
+                    &["cpu-[0-9]{0,3}-freq", "cpu-[0-9]{0,3}-load"],
+                    &[
+                        (
+                            bench_info.cpu_freq_limits.0 / 1000.0,
+                            bench_info.cpu_freq_limits.1 / 1000.0,
+                        ),
+                        (0.0, f64::MAX),
+                    ],
                     sysinfo_average_calculator,
                     Some(runtime + ramp_time),
                 )
-                .context("Calculate powersensor3 means")
+                .context("Calculate sysinfo means")
                 .unwrap();
 
                 PlotEntry {
@@ -216,10 +226,13 @@ impl Plot for FioBasic {
         let latency_dir = plot_path.join("latency");
         let power_dir = plot_path.join("power");
         let efficiency_dir = plot_path.join("efficiency");
-        let dirs = [&throughput_dir, &latency_dir, &power_dir, &efficiency_dir];
-        for dir in join_all(dirs.iter().map(create_dir_all)).await.into_iter() {
-            dir?;
-        }
+        ensure_plot_dirs(&[
+            throughput_dir.clone(),
+            latency_dir.clone(),
+            power_dir.clone(),
+            efficiency_dir.clone(),
+        ])
+        .await?;
 
         let plot_jobs: Vec<(
             Vec<PlotEntry>,
@@ -279,30 +292,29 @@ impl Plot for FioBasic {
                 ready_entries.clone(),
                 settings,
                 power_dir.join(format!("{experiment_name}-freq.pdf")),
-                "power",
-                Some("Freq"),
+                "freq",
+                Some("CPU"),
                 |data| data.freq,
             ),
             (
                 ready_entries.clone(),
                 settings,
                 power_dir.join(format!("{experiment_name}-load.pdf")),
-                "power",
-                Some("Load"),
+                "load",
+                Some("Linux"),
                 |data| data.load,
             ),
         ];
 
         let results = plot_jobs
             .into_par_iter()
-            .map(|x| self.bar_plot(x.0, x.1, x.2, x.3, x.4, x.5))
+            .map(|x| self.bar_plot(x.0, x.1, x.2, x.3, x.4, x.5, bench_info))
             .collect::<Vec<_>>();
         for item in results {
             item?;
         }
 
         let efficiency_dir = plot_path.join("efficiency");
-        create_dir_all(&efficiency_dir).await?;
         self.efficiency(ready_entries.clone(), settings, &efficiency_dir)
             .await?;
 
@@ -383,91 +395,60 @@ impl FioBasic {
             edp_total[x][y] = item.8;
         }
 
-        let plot_data_dir = plot_path.join("plot_data");
-        if !plot_data_dir.exists() {
-            create_dir_all(&plot_data_dir).await?;
-        }
-
-        fn write_json<T: Serialize>(
-            data: &T,
-            path: &Path,
-            plot_data_dir: &Path,
-        ) -> Result<PathBuf> {
-            let p = plot_data_dir.join(format!(
-                "{}.json",
-                path.file_stem().unwrap().to_str().unwrap()
-            ));
-            write(&p, &serde_json::to_string(data)?)?;
-            Ok(p)
-        }
-
-        let jobs = [
-            (
-                plot_path.join(format!("{}-iops-j.pdf", &experiment_name)),
-                iops_j,
-                "IOPS/J",
-                false,
-            ),
-            (
-                plot_path.join(format!("{}-+cpu-iops-j.pdf", &experiment_name)),
-                iops_j_cpu,
-                "IOPS/J",
-                false,
-            ),
-            (
-                plot_path.join(format!("{}-bytes-j.pdf", &experiment_name)),
-                bytes_j,
-                "MiB/J",
-                false,
-            ),
-            (
-                plot_path.join(format!("{}-+cpu-bytes-j.pdf", &experiment_name)),
-                bytes_j_cpu,
-                "MiB/J",
-                false,
-            ),
-            (
-                plot_path.join(format!("{}-edp.pdf", &experiment_name)),
-                edp,
-                "EDP",
-                true,
-            ),
-            (
-                plot_path.join(format!("{}-edp-p99.pdf", &experiment_name)),
-                edp_p99,
-                "P99 EDP",
-                true,
-            ),
-            (
-                plot_path.join(format!("{}-edp-total.pdf", &experiment_name)),
-                edp_total,
-                "EDP total",
-                true,
-            ),
+        let x_label = self.x_label.as_str();
+        let jobs = vec![
+            HeatmapJob {
+                filepath: plot_path.join(format!("{}-iops-j.pdf", &experiment_name)),
+                data: iops_j,
+                title: "IOPS/J",
+                x_label,
+                reverse: false,
+            },
+            HeatmapJob {
+                filepath: plot_path.join(format!("{}-+cpu-iops-j.pdf", &experiment_name)),
+                data: iops_j_cpu,
+                title: "IOPS/J",
+                x_label,
+                reverse: false,
+            },
+            HeatmapJob {
+                filepath: plot_path.join(format!("{}-bytes-j.pdf", &experiment_name)),
+                data: bytes_j,
+                title: "MiB/J",
+                x_label,
+                reverse: false,
+            },
+            HeatmapJob {
+                filepath: plot_path.join(format!("{}-+cpu-bytes-j.pdf", &experiment_name)),
+                data: bytes_j_cpu,
+                title: "MiB/J",
+                x_label,
+                reverse: false,
+            },
+            HeatmapJob {
+                filepath: plot_path.join(format!("{}-edp.pdf", &experiment_name)),
+                data: edp,
+                title: "EDP",
+                x_label,
+                reverse: true,
+            },
+            HeatmapJob {
+                filepath: plot_path.join(format!("{}-edp-p99.pdf", &experiment_name)),
+                data: edp_p99,
+                title: "P99 EDP",
+                x_label,
+                reverse: true,
+            },
+            HeatmapJob {
+                filepath: plot_path.join(format!("{}-edp-total.pdf", &experiment_name)),
+                data: edp_total,
+                title: "EDP total",
+                x_label,
+                reverse: true,
+            },
         ];
 
-        let results = jobs
-            .par_iter()
-            .map(|(filepath, data, title, reverse)| {
-                let data_file = write_json(&data, filepath, &plot_data_dir).unwrap();
-                plot_python(
-                    "efficiency",
-                    &[
-                        ("--data", data_file.to_str().unwrap()),
-                        ("--filepath", filepath.to_str().unwrap()),
-                        ("--col_labels", &labels.join(",")),
-                        ("--x_label", &self.x_label),
-                        ("--experiment_name", &experiment_name),
-                        ("--title", title),
-                        ("--reverse", if *reverse { "1" } else { "0" }),
-                    ],
-                )
-            })
-            .collect::<Vec<_>>();
-        for item in results {
-            item?;
-        }
-        Ok(())
+        render_heatmaps(&experiment_name, &labels, plot_path, &jobs)
     }
 
     fn bar_plot(
@@ -478,6 +459,7 @@ impl FioBasic {
         plotting_file: &str,
         name: Option<&str>,
         get_mean: fn(&PlotEntry) -> f64,
+        bench_info: &BenchInfo,
     ) -> Result<()> {
         let num_power_states = settings.nvme_power_states.clone().unwrap_or(vec![0]).len();
         let mut results = vec![vec![]; num_power_states];
@@ -502,35 +484,20 @@ impl FioBasic {
             item.sort_by_key(|entry| order.get(&self.get_order_key(&entry.0).unwrap()).unwrap());
         }
 
-        let plot_data_dir = filepath.parent().unwrap().join("plot_data");
-        if !plot_data_dir.exists() {
-            std::fs::create_dir_all(&plot_data_dir)?;
-        }
-
         let results = results
             .iter()
             .map(|x| x.iter().map(|x| x.1).collect::<Vec<_>>())
             .collect::<Vec<_>>();
-        let plot_data_file = plot_data_dir.join(format!(
-            "{}.json",
-            &filepath.file_stem().unwrap().to_str().unwrap()
-        ));
-        write(&plot_data_file, &serde_json::to_string(&results)?)?;
-        let labels = labels.join(",");
-        let mut args = vec![
-            ("--data", plot_data_file.to_str().unwrap()),
-            ("--filepath", filepath.to_str().unwrap()),
-            ("--x_label_name", &self.x_label),
-            ("--experiment_name", &experiment_name),
-            ("--labels", &labels),
-        ];
-
-        if let Some(name) = name {
-            args.push(("--name", name));
-        }
-
-        plot_python(plotting_file, &args)?;
-        Ok(())
+        let chart_kind = match plotting_file {
+            "throughput" => BarChartKind::Throughput,
+            "latency" => BarChartKind::Latency,
+            "power" => BarChartKind::Power,
+            "freq" => BarChartKind::Freq,
+            "load" => BarChartKind::Load,
+            other => bail!("Unsupported plotting file {other}"),
+        };
+        let config = make_power_state_bar_config(chart_kind, &self.x_label, &experiment_name, name);
+        plot_bar_chart(&filepath, results, labels, config, bench_info)
     }
 
     fn get_order_key(&self, entry: &PlotEntry) -> Result<String> {
@@ -709,41 +676,37 @@ impl Plot for FioBwOverTime {
         plot_type: &PlotType,
         data_path: &Path,
         plot_path: &Path,
-        config_yaml: &Config,
-        info: &HashMap<String, BenchmarkInfo>,
+        _: &Config,
+        bench_info: &BenchInfo,
         dirs: Vec<String>,
         _: &Settings,
-        _: &mut Vec<String>,
+        completed_dirs: &mut Vec<String>,
     ) -> Result<()> {
         if *plot_type == PlotType::Total {
             return Ok(());
         }
 
-        let mut groups = HashMap::new();
-        for run in dirs {
-            let item = info.get(&run).context("No info for run")?;
-            let key = (item.name.clone(), item.power_state, item.hash.clone());
-            groups.entry(key).or_insert_with(|| (run, item.clone()));
+        let groups = collect_run_groups(dirs, &bench_info.param_map, completed_dirs)?;
+        if groups.is_empty() {
+            return Ok(());
         }
 
-        let entries = groups.drain().map(|(_, x)| x).collect::<Vec<_>>();
-
         let bw_dir = plot_path.join("fio_time");
-        let bw_inner_dir = bw_dir.join(&entries[0].1.name);
-        create_dir_all(&bw_inner_dir).await?;
-        entries.par_iter().for_each(|data| {
-            let config_yaml = config_yaml.benches.iter().find(|x| x.name.eq(&data.1.name));
-            let config_yaml = config_yaml
-                .as_ref()
-                .unwrap()
-                .bench
-                .downcast_ref::<Fio>()
-                .unwrap();
+        let bw_inner_dir = bw_dir.join(&groups[0].info.name);
+        ensure_plot_dirs(&[
+            bw_dir.clone(),
+            bw_inner_dir.clone(),
+            bw_inner_dir.join("plot_data"),
+        ])
+        .await?;
+
+        groups.par_iter().for_each(|group| {
             self.fio_time(
-                data_path.join(data.0.clone()),
+                data_path,
+                &group.dir,
                 &bw_inner_dir,
-                config_yaml,
-                &data.1,
+                &group.info,
+                bench_info,
             )
             .expect("Error running fio_time");
         });
@@ -754,10 +717,11 @@ impl Plot for FioBwOverTime {
 impl FioBwOverTime {
     fn fio_time(
         &self,
-        data_path: PathBuf,
+        data_path: &Path,
+        group_dir: &str,
         plot_path: &Path,
-        _config_yaml: &Fio,
-        info: &BenchmarkInfo,
+        info: &BenchParams,
+        bench_info: &BenchInfo,
     ) -> Result<()> {
         let config = info.args.downcast_ref::<Fio>().unwrap();
         let variable = match self.variable.as_str() {
@@ -769,14 +733,59 @@ impl FioBwOverTime {
             _ => bail!("Unsupported plot variable {}", self.variable),
         };
         let name = format!("{}-{}-{}", info.name, info.power_state, variable);
-        plot_python(
-            "fio_time",
-            &[
-                ("--plot_dir", plot_path.to_str().unwrap()),
-                ("--results_dir", data_path.to_str().unwrap()),
-                ("--name", &name),
+
+        let default = TimeSeriesPlot::new(
+            None,
+            format!("{name}-throughput-verify"),
+            "Fio throughput vs Diskstat throughput",
+            TimeSeriesAxis::bench_time(),
+            vec![TimeSeriesAxis::bench(
+                "smoothed",
+                "Throughput",
+                "Throughput (MiB/s)",
+            )],
+        );
+
+        plot_time_series(TimeSeriesSpec::new(
+            BenchKind::Fio.name(),
+            plot_path.to_path_buf(),
+            data_path.join(group_dir),
+            &name,
+            vec![
+                TimeSeriesPlot::new(
+                    None,
+                    format!("{name}-throughput-verify"),
+                    "Fio throughput vs Diskstat throughput",
+                    TimeSeriesAxis::bench_time(),
+                    vec![TimeSeriesAxis::bench(
+                        "smoothed",
+                        "fio",
+                        "Fio Throughput (MiB/s)",
+                    )],
+                )
+                .with_secondary(diskstat::DISKSTAT_PLOT_AXIS.to_vec()),
+                default
+                    .clone()
+                    .with_title("Throughput vs SSD power")
+                    .with_filename(format!("{name}-ssd"))
+                    .with_secondary(powersensor_3::POWERSENSOR_PLOT_AXIS.to_vec()),
+                default
+                    .clone()
+                    .with_title("Throughput vs CPU power")
+                    .with_filename(format!("{name}-cpu"))
+                    .with_secondary(rapl::RAPL_PLOT_AXIS.to_vec()),
+                default
+                    .clone()
+                    .with_title("Throughput vs CPU freq")
+                    .with_filename(format!("{name}-cpu-freq"))
+                    .with_secondary(sysinfo::sysinfo_freq_plot_axis(&bench_info.cpu_topology)),
+                default
+                    .clone()
+                    .with_title("Throughput vs CPU load")
+                    .with_filename(format!("{name}-cpu-load"))
+                    .with_secondary(sysinfo::sysinfo_load_plot_axis(&bench_info.cpu_topology)),
             ],
-        )?;
+        ))?;
         Ok(())
     }
 }

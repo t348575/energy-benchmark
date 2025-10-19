@@ -1,7 +1,9 @@
 use std::{
     collections::{HashMap, HashSet},
     fmt::Debug,
+    fs,
     hash::Hash,
+    ops::AddAssign,
     path::{Path, PathBuf},
     pin::Pin,
     process::Stdio,
@@ -12,17 +14,24 @@ use std::{
 use csv::{ReaderBuilder, StringRecord, Writer};
 use eyre::{Context, ContextCompat, Result, bail};
 use flume::{Receiver, Sender};
+use rayon::{
+    iter::{IntoParallelRefIterator, ParallelIterator},
+    slice::ParallelSlice,
+};
 use regex::Regex;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use tokio::{
-    fs::{File, create_dir_all},
-    io::{AsyncReadExt, AsyncWriteExt},
+    fs::{File, OpenOptions, create_dir_all, read_to_string as tokio_read_to_string},
+    io::{self, AsyncReadExt, AsyncWriteExt},
     process::Command,
     spawn,
 };
 use tracing::{debug, error, info, warn};
 
-use crate::sensor::{SensorArgs, SensorReply, SensorRequest};
+use crate::{
+    bench::BenchInfo,
+    sensor::{SensorArgs, SensorReply, SensorRequest},
+};
 
 pub fn find_outliers_by_stddev(data: &[f64], allowed_deviation: f64) -> Vec<usize> {
     if data.is_empty() {
@@ -183,7 +192,7 @@ where
                     SensorRequest::StopRecording => {
                         debug!("Stopping {} reader", args.name());
                         is_running = false;
-                        let filename = dir.join(format!("{filename}.csv"));
+                        let filename = dir.join(filename);
                         let mut file = File::create(filename).await?;
 
                         file.write_all(format!("time,{}\n", sensor_names.join(",")).as_bytes())
@@ -249,6 +258,434 @@ where
     Ok(())
 }
 
+pub async fn read_json_file<T>(path: impl AsRef<Path>) -> Result<T>
+where
+    T: DeserializeOwned,
+{
+    let data = tokio_read_to_string(path.as_ref()).await?;
+    Ok(serde_json::from_str(&data)?)
+}
+
+#[derive(Serialize)]
+struct BarChartSpec {
+    data: Vec<Vec<f64>>,
+    labels: Vec<String>,
+    title: String,
+    x_label: String,
+    y_label: String,
+    output_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    legend_labels: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tick_rotation_deg: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tick_horizontal_align: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    bar_width: Option<f64>,
+    nvme_power_states: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct BarChartConfig {
+    pub title: String,
+    pub x_label: String,
+    pub y_label: String,
+    pub legend_labels: Option<Vec<String>>,
+    pub tick_rotation_deg: Option<f64>,
+    pub tick_horizontal_align: Option<String>,
+    pub bar_width: Option<f64>,
+}
+
+impl BarChartConfig {
+    pub fn new(
+        title: impl Into<String>,
+        x_label: impl Into<String>,
+        y_label: impl Into<String>,
+    ) -> Self {
+        Self {
+            title: title.into(),
+            x_label: x_label.into(),
+            y_label: y_label.into(),
+            legend_labels: None,
+            tick_rotation_deg: None,
+            tick_horizontal_align: None,
+            bar_width: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum BarChartKind {
+    Throughput,
+    Latency,
+    Power,
+    Freq,
+    Load,
+}
+
+pub fn make_power_state_bar_config(
+    kind: BarChartKind,
+    x_label: &str,
+    experiment_name: &str,
+    name_prefix: Option<&str>,
+) -> BarChartConfig {
+    let clean_prefix = name_prefix.and_then(|p| {
+        let trimmed = p.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
+    });
+
+    match kind {
+        BarChartKind::Throughput => {
+            let title = format!("Throughput for {} vs. power state", x_label.to_lowercase());
+            let mut config = BarChartConfig::new(
+                title,
+                format!("{} {}", x_label, experiment_name),
+                "Throughput (MiB/s)",
+            );
+            config.tick_rotation_deg = Some(45.0);
+            config.tick_horizontal_align = Some("right".to_owned());
+            config
+        }
+        BarChartKind::Latency => {
+            let title = match clean_prefix {
+                Some(prefix) => format!(
+                    "{} Latency for {} vs. power state",
+                    prefix,
+                    x_label.to_lowercase()
+                ),
+                None => format!("Latency for {} vs. power state", x_label.to_lowercase()),
+            };
+            BarChartConfig::new(
+                title,
+                format!("{} {}", x_label, experiment_name),
+                "Latency (ms)",
+            )
+        }
+        BarChartKind::Power => {
+            let title = match clean_prefix {
+                Some(prefix) => format!("{} power vs. {}", prefix, x_label.to_lowercase()),
+                None => format!("Power vs. {}", x_label.to_lowercase()),
+            };
+            let mut config = BarChartConfig::new(title, x_label.to_owned(), "Power (Watts)");
+            config.tick_rotation_deg = Some(45.0);
+            config.tick_horizontal_align = Some("right".to_owned());
+            config
+        }
+        BarChartKind::Freq => {
+            let title = match clean_prefix {
+                Some(prefix) => format!("{} frequency vs. {}", prefix, x_label.to_lowercase()),
+                None => format!("Frequency vs. {}", x_label.to_lowercase()),
+            };
+            let mut config = BarChartConfig::new(title, x_label.to_owned(), "Frequency (MHz)");
+            config.tick_rotation_deg = Some(45.0);
+            config.tick_horizontal_align = Some("right".to_owned());
+            config
+        }
+        BarChartKind::Load => {
+            let title = match clean_prefix {
+                Some(prefix) => format!("{} load vs. {}", prefix, x_label.to_lowercase()),
+                None => format!("Load vs. {}", x_label.to_lowercase()),
+            };
+            let mut config = BarChartConfig::new(title, x_label.to_owned(), "Load");
+            config.tick_rotation_deg = Some(45.0);
+            config.tick_horizontal_align = Some("right".to_owned());
+            config
+        }
+    }
+}
+
+pub fn plot_bar_chart(
+    filepath: &Path,
+    data: Vec<Vec<f64>>,
+    labels: Vec<String>,
+    config: BarChartConfig,
+    bench_info: &BenchInfo,
+) -> Result<()> {
+    if data.is_empty() {
+        return Ok(());
+    }
+
+    let parent = filepath
+        .parent()
+        .context("Bar chart output path missing parent directory")?;
+    let plot_data_dir = parent.join("plot_data");
+    if !plot_data_dir.exists() {
+        fs::create_dir_all(&plot_data_dir)?;
+    }
+
+    let stem = filepath
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .context("Failed to derive bar chart file stem")?;
+    let spec_path = plot_data_dir.join(format!("{stem}.bar.json"));
+
+    let output_path = filepath
+        .to_str()
+        .context("Bar chart output path is not valid UTF-8")?
+        .to_owned();
+
+    let spec = BarChartSpec {
+        data,
+        labels,
+        title: config.title,
+        x_label: config.x_label,
+        y_label: config.y_label,
+        output_path,
+        legend_labels: config.legend_labels,
+        tick_rotation_deg: config.tick_rotation_deg,
+        tick_horizontal_align: config.tick_horizontal_align,
+        bar_width: config.bar_width,
+        nvme_power_states: bench_info
+            .device_power_states
+            .iter()
+            .map(|x| x.1.clone())
+            .collect(),
+    };
+
+    let spec_serialized = serde_json::to_string(&spec)?;
+    fs::write(&spec_path, spec_serialized)?;
+
+    let spec_path_str = spec_path
+        .to_str()
+        .context("Bar chart spec path is not valid UTF-8")?
+        .to_owned();
+    let args = vec![("--spec".to_owned(), spec_path_str)];
+    plot_python("bar_chart", &args)
+}
+
+fn sanitize_filename(input: &str) -> String {
+    input
+        .chars()
+        .map(|c| match c {
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' => c,
+            _ => '_',
+        })
+        .collect()
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TimeSeriesPlot {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub x_axis: Option<TimeSeriesAxis>,
+    pub y_axis: Vec<TimeSeriesAxis>,
+    pub time: TimeSeriesAxis,
+    #[serde(default)]
+    pub secondary_y_axis: Vec<TimeSeriesAxis>,
+    pub title: String,
+    pub file_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dir: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TimeSeriesAxis {
+    pub axis_type: TimeSeriesAxisType,
+    pub dataset_name: String,
+    pub dataset_field: String,
+    pub plot_label: String,
+    pub axis_label: String,
+}
+
+impl TimeSeriesAxis {
+    pub fn sensor(
+        sensor: impl Into<String>,
+        dataset_field: impl Into<String>,
+        plot_label: impl Into<String>,
+        axis_label: impl Into<String>,
+    ) -> Self {
+        Self {
+            axis_type: TimeSeriesAxisType::Sensor,
+            dataset_name: sensor.into(),
+            dataset_field: dataset_field.into(),
+            plot_label: plot_label.into(),
+            axis_label: axis_label.into(),
+        }
+    }
+
+    pub fn bench(
+        dataset_field: impl Into<String>,
+        plot_label: impl Into<String>,
+        axis_label: impl Into<String>,
+    ) -> Self {
+        Self {
+            axis_type: TimeSeriesAxisType::Bench,
+            dataset_name: "bench".into(),
+            dataset_field: dataset_field.into(),
+            plot_label: plot_label.into(),
+            axis_label: axis_label.into(),
+        }
+    }
+
+    pub fn sensor_time(sensor: impl Into<String>) -> Self {
+        Self::sensor(sensor, "time", "Time", "Time (s)")
+    }
+
+    pub fn bench_time() -> Self {
+        Self::bench("time", "Time", "Time (s)")
+    }
+}
+
+impl TimeSeriesPlot {
+    pub fn new(
+        dir: Option<String>,
+        file_name: impl Into<String>,
+        title: impl Into<String>,
+        time: TimeSeriesAxis,
+        y_axis: Vec<TimeSeriesAxis>,
+    ) -> Self {
+        Self {
+            x_axis: None,
+            y_axis,
+            time,
+            secondary_y_axis: Vec::new(),
+            title: title.into(),
+            file_name: file_name.into(),
+            dir: dir.into(),
+        }
+    }
+
+    pub fn with_secondary(mut self, axes: Vec<TimeSeriesAxis>) -> Self {
+        self.secondary_y_axis = axes;
+        self
+    }
+
+    pub fn with_title(mut self, title: impl Into<String>) -> Self {
+        self.title = title.into();
+        self
+    }
+
+    pub fn with_filename(mut self, file_name: impl Into<String>) -> Self {
+        self.file_name = file_name.into();
+        self
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TimeSeriesAxisType {
+    Sensor,
+    Bench,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TimeSeriesSpec {
+    pub bench_type: String,
+    pub plot_dir: PathBuf,
+    pub results_dir: PathBuf,
+    pub config_yaml: PathBuf,
+    pub info_json: PathBuf,
+    pub name: String,
+    pub plots: Vec<TimeSeriesPlot>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub offset: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trim_end: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub width: Option<usize>,
+}
+
+impl TimeSeriesSpec {
+    pub fn new(
+        bench_type: impl Into<String>,
+        plot_dir: impl Into<PathBuf>,
+        results_dir: impl Into<PathBuf>,
+        name: impl Into<String>,
+        plots: Vec<TimeSeriesPlot>,
+    ) -> Self {
+        let name = name.into();
+        let results_dir = results_dir.into();
+        let base_dir: PathBuf = results_dir
+            .clone()
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .into();
+
+        Self {
+            bench_type: bench_type.into(),
+            plot_dir: plot_dir.into(),
+            results_dir: results_dir,
+            config_yaml: base_dir.join("config.yaml"),
+            info_json: base_dir.join("info.json"),
+            name,
+            plots,
+            offset: None,
+            trim_end: None,
+            width: None,
+        }
+    }
+
+    pub fn with_offset(mut self, offset: Option<usize>) -> Self {
+        self.offset = offset;
+        self
+    }
+
+    pub fn with_trim_end(mut self, trim_end: Option<usize>) -> Self {
+        self.trim_end = trim_end;
+        self
+    }
+
+    pub fn with_width(mut self, width: Option<usize>) -> Self {
+        self.width = width;
+        self
+    }
+
+    pub fn with_plots(mut self, plots: Vec<TimeSeriesPlot>) -> Self {
+        self.plots = plots;
+        self
+    }
+
+    fn plot_dir(&self) -> &Path {
+        &self.plot_dir
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+pub fn plot_time_series(spec: TimeSeriesSpec) -> Result<()> {
+    let plot_dir = spec.plot_dir();
+    if !plot_dir.exists() {
+        fs::create_dir_all(plot_dir)?;
+    }
+
+    let mut ensured_dirs = HashSet::new();
+    for plot in &spec.plots {
+        match &plot.dir {
+            Some(dir) => {
+                if ensured_dirs.insert(dir.to_owned()) {
+                    fs::create_dir_all(plot_dir.join(dir))?;
+                }
+            }
+            None => continue,
+        }
+    }
+
+    let spec_dir = plot_dir.join("plot_specs");
+    if !spec_dir.exists() {
+        fs::create_dir_all(&spec_dir)?;
+    }
+
+    let spec_filename = format!("{}.time.json", sanitize_filename(spec.name()));
+    let spec_path = spec_dir.join(spec_filename);
+
+    let spec_serialized = serde_json::to_string(&spec)?;
+    fs::write(&spec_path, spec_serialized)?;
+
+    let spec_path_str = spec_path
+        .to_str()
+        .context("Time-series spec path is not valid UTF-8")?
+        .to_owned();
+    let args = vec![("--spec".to_owned(), spec_path_str)];
+    plot_python("time_series", &args)
+}
+
 #[derive(thiserror::Error, Debug)]
 pub enum CommandError {
     #[error("Failed to launch command {0}")]
@@ -312,6 +749,7 @@ pub enum Filesystem {
     Ext4,
     Xfs,
     Btrfs,
+    F2fs,
 }
 
 impl Filesystem {
@@ -321,6 +759,7 @@ impl Filesystem {
             Filesystem::Ext4 => format!("sudo mkfs.ext4 -F -L ext4_bench {device}"),
             Filesystem::Xfs => format!("sudo mkfs.xfs -f -L xfs_bench {device}"),
             Filesystem::Btrfs => format!("sudo mkfs.btrfs -f -L btrfs_bench {device}"),
+            Filesystem::F2fs => format!("sudo mkfs.f2fs -f -l f2fs_bench {device}"),
         })
     }
 
@@ -330,6 +769,7 @@ impl Filesystem {
             Filesystem::Ext4 => 1,
             Filesystem::Xfs => 2,
             Filesystem::Btrfs => 3,
+            Filesystem::F2fs => 4,
         }
     }
 }
@@ -429,7 +869,7 @@ pub fn calculate_sectioned<CalculatedData: Debug + Default + Copy, const N: usiz
     let parse = |rec: &StringRecord| -> Option<(usize, Vec<f64>)> {
         let time = rec.get(time_idx)?.parse().ok()?;
         let values = col_indexes
-            .iter()
+            .par_iter()
             .filter_map(|col_idx| {
                 let val = rec.get(col_idx.1)?;
                 let val = val.parse::<f64>().ok()?;
@@ -488,6 +928,7 @@ pub fn parse_trace<R: std::io::Read>(reader: R, fs: &Filesystem) -> Result<Vec<T
         Filesystem::Ext4 => "ext4_writepages",
         Filesystem::Xfs => "xfs_vm_writepages",
         Filesystem::Btrfs => "do_writepages",
+        Filesystem::F2fs => "f2fs_writepages", // TODO: check if this is correct
     };
 
     let mut records = Vec::new();
@@ -586,24 +1027,25 @@ pub struct SectionStats {
 }
 
 pub fn power_energy_calculator(data: &[(usize, Vec<f64>)]) -> SectionStats {
-    let (sum, count) = data
-        .iter()
-        .fold((0.0, 0), |(s, c), (_, v)| (s + v[0], c + 1));
+    let count = data.len();
+    let sum = data.par_iter().map(|(_, v)| v[0]).sum::<f64>();
     let mean = if count > 0 {
         Some(sum / count as f64)
     } else {
         None
     };
 
-    let energy = if data.len() >= 2 {
-        let mut e = 0.0;
-        for win in data.windows(2) {
-            let (t0, p0) = &win[0];
-            let (t1, p1) = &win[1];
-            let dt = (*t1 as f64) - (*t0 as f64);
-            e += 0.5 * (p0[0] + p1[0]) * (dt / 1000.0);
-        }
-        Some(e)
+    let energy = if count >= 2 {
+        Some(
+            data.par_windows(2)
+                .map(|win| {
+                    let (t0, p0) = &win[0];
+                    let (t1, p1) = &win[1];
+                    let dt = (*t1 as f64) - (*t0 as f64);
+                    0.5 * (p0[0] + p1[0]) * (dt / 1000.0)
+                })
+                .sum::<f64>(),
+        )
     } else {
         None
     };
@@ -615,15 +1057,20 @@ pub fn power_energy_calculator(data: &[(usize, Vec<f64>)]) -> SectionStats {
 }
 
 pub fn sysinfo_average_calculator(data: &[(usize, Vec<f64>)]) -> (f64, f64) {
-    let (sum, count) = data.iter().fold(((0.0, 0.0), 0), |(s, c), (_, v)| {
-        let quarter = v.len() / 4;
-        let half = v.len() / 2;
-        let count = half - quarter;
-        let freq = v[quarter..half].iter().sum::<f64>() / count as f64;
-        let load = v[quarter + half..].iter().sum::<f64>() / count as f64;
-        ((s.0 + freq, s.1 + load), c + 1)
-    });
-    (sum.0 / count as f64, sum.1 / count as f64)
+    let (sum_freq, sum_load, n) = data
+        .par_iter()
+        .map(|(_, v)| {
+            let half = v.len() / 2;
+            let freq = v[..half].iter().copied().sum::<f64>() / half as f64;
+            let load = v[half..].iter().copied().sum::<f64>() / half as f64;
+            (freq, load, 1usize)
+        })
+        .reduce(
+            || (0.0, 0.0, 0usize),
+            |(f1, l1, c1), (f2, l2, c2)| (f1 + f2, l1 + l2, c1 + c2),
+        );
+
+    (sum_freq / n as f64, sum_load / n as f64)
 }
 
 pub async fn mount_fs(
@@ -751,4 +1198,39 @@ fn old_csv_format<CalculatedData: Debug + Default + Copy, const N: usize>(
     let data: Vec<(usize, Vec<f64>)> = records.iter().enumerate().filter_map(parse).collect();
     let overall = calculator(&data);
     Ok(([CalculatedData::default(); N], overall, [0; N]))
+}
+
+pub async fn get_cpu_topology() -> Result<HashMap<u32, u32>> {
+    let mut topology = HashMap::new();
+    let mut dir = tokio::fs::read_dir("/sys/devices/system/cpu/").await?;
+    while let Some(entry) = dir.next_entry().await? {
+        let file_name = entry.file_name();
+        let file_name_str = file_name.to_string_lossy();
+
+        if !file_name_str.starts_with("cpu") {
+            continue;
+        }
+        let cpu_index_str = &file_name_str[3..];
+        if cpu_index_str.is_empty() || !cpu_index_str.chars().all(|c| c.is_ascii_digit()) {
+            continue;
+        }
+
+        let topology_path = entry.path().join("topology/physical_package_id");
+        if Path::new(&topology_path).exists() {
+            let mut file = File::open(topology_path).await?;
+            let mut result = String::new();
+            file.read_to_string(&mut result).await?;
+            if let Ok(package_id) = result.trim().parse::<u32>() {
+                topology.entry(package_id).or_insert(0).add_assign(1);
+            }
+        }
+    }
+    Ok(topology)
+}
+
+pub async fn write_one_line<P: AsRef<Path>>(path: P, s: &str) -> io::Result<()> {
+    let mut f = OpenOptions::new().write(true).open(&path).await?;
+    f.write(format!("{s}\n").as_bytes()).await?;
+    debug!("Writing to {}, {}", path.as_ref().display(), s);
+    Ok(())
 }

@@ -1,7 +1,7 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
-use common::{bench::BenchmarkInfo, config::Config, plot::PlotType};
+use common::{bench::BenchInfo, config::Config, plot::PlotType};
 use eyre::Result;
 use regex::Regex;
 use tokio::fs::{create_dir_all, read_dir, read_to_string, remove_dir_all};
@@ -28,7 +28,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// List run benchmarks
-    Ls,
+    List,
     /// Run a benchmark
     Bench {
         #[arg(short, long, default_value = "config.yaml")]
@@ -49,6 +49,8 @@ enum Commands {
         #[arg(short, long)]
         folder: String,
     },
+    /// List available sensors
+    ListSensors,
 }
 
 #[tokio::main]
@@ -87,9 +89,8 @@ async fn main() -> Result<()> {
     default_sensors::init_sensors();
     default_plots::init_plots();
 
-    create_dir_all("results").await?;
     match args.command {
-        Commands::Ls => list_benchmarks().await?,
+        Commands::List => list_benchmarks().await?,
         Commands::Bench {
             config_file,
             skip_plot,
@@ -101,6 +102,7 @@ async fn main() -> Result<()> {
         }
         Commands::Plot { folder } => plot(&folder).await?,
         Commands::Print { folder } => print_commands(&folder).await?,
+        Commands::ListSensors => list_sensors().await?,
     };
 
     Ok(())
@@ -168,12 +170,13 @@ async fn plot(folder: &str) -> Result<()> {
         serde_yml::from_str(&read_to_string(base_path.join("config.yaml")).await?)?;
     let data_path = base_path.join("data");
 
-    let benchmark_info: HashMap<String, BenchmarkInfo> =
+    let bench_info: BenchInfo =
         serde_json::from_str(&read_to_string(base_path.join("info.json")).await?)?;
 
     for experiment in &config.benches {
         let dir_regex = Regex::new(&format!("^{}-ps(?:-1|[0-4])-\\S+$", experiment.name))?;
-        let experiment_dirs = benchmark_info
+        let experiment_dirs = bench_info
+            .param_map
             .keys()
             .filter(|x| dir_regex.is_match(x))
             .map(|x| x.to_owned())
@@ -185,7 +188,7 @@ async fn plot(folder: &str) -> Result<()> {
             &data_path,
             &plot_path,
             &config,
-            &benchmark_info,
+            &bench_info,
             experiment_dirs.clone(),
             &config.settings,
             &mut Vec::new(),
@@ -201,13 +204,21 @@ async fn plot(folder: &str) -> Result<()> {
             &data_path,
             &plot_path,
             &config,
-            &benchmark_info,
-            benchmark_info.keys().cloned().collect(),
+            &bench_info,
+            bench_info.param_map.keys().cloned().collect(),
             &config.settings,
             &mut completed_dirs,
         )
         .await?;
     }
 
+    Ok(())
+}
+
+async fn list_sensors() -> Result<()> {
+    let sensors = default_sensors::SENSORS.get().unwrap().lock().await;
+    for sensor in sensors.iter() {
+        println!("{}", sensor.name());
+    }
     Ok(())
 }

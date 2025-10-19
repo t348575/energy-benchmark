@@ -1,14 +1,13 @@
 use std::{
     cmp::min,
-    collections::HashSet,
-    path::Path,
-    sync::Arc,
+    sync::{Arc, LazyLock},
     time::{Duration, Instant},
 };
 
 use common::{
+    config::Settings,
     sensor::{Sensor, SensorArgs, SensorReply, SensorRequest},
-    util::{SensorError, sensor_reader},
+    util::{SensorError, TimeSeriesAxis, get_cpu_topology, sensor_reader},
 };
 use eyre::{Context, ContextCompat, Result};
 use flume::{Receiver, Sender};
@@ -42,34 +41,13 @@ struct InternalRapl {
 
 impl InternalRapl {
     async fn new() -> Result<Self, RaplError> {
-        let mut package_ids = HashSet::new();
-        let mut dir = tokio::fs::read_dir("/sys/devices/system/cpu/").await?;
-        while let Some(entry) = dir.next_entry().await? {
-            let file_name = entry.file_name();
-            let file_name_str = file_name.to_string_lossy();
-
-            if !file_name_str.starts_with("cpu") {
-                continue;
-            }
-            let cpu_index_str = &file_name_str[3..];
-            if cpu_index_str.is_empty() || !cpu_index_str.chars().all(|c| c.is_ascii_digit()) {
-                continue;
-            }
-
-            let topology_path = entry.path().join("topology/physical_package_id");
-            if Path::new(&topology_path).exists() {
-                let mut file = File::open(topology_path).await?;
-                let mut result = String::new();
-                file.read_to_string(&mut result).await?;
-                if let Ok(package_id) = result.trim().parse::<u32>() {
-                    package_ids.insert(package_id);
-                }
-            }
-        }
-
-        let mut packages = package_ids.into_iter().collect::<Vec<_>>();
+        let topology = get_cpu_topology()
+            .await
+            .map_err(|e| RaplError::CreationFailed(e.to_string()))?;
+        let mut packages = topology.into_iter().map(|x| x.0).collect::<Vec<_>>();
         packages.sort();
         debug!("cpu packages: {packages:?}");
+
         let mut files = Vec::new();
         for package in &packages {
             debug!("/sys/class/powercap/intel-rapl:{package}/energy_uj");
@@ -123,6 +101,8 @@ impl SensorArgs for RaplConfig {
     }
 }
 
+const RAPL_FILENAME: &str = "rapl.csv";
+
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Rapl;
 
@@ -131,9 +111,14 @@ impl Sensor for Rapl {
         "Rapl"
     }
 
+    fn filename(&self) -> &'static str {
+        RAPL_FILENAME
+    }
+
     fn start(
         &self,
         args: &dyn common::sensor::SensorArgs,
+        _: &Settings,
         rx: Receiver<SensorRequest>,
         tx: Sender<SensorReply>,
     ) -> Result<JoinHandle<Result<()>>> {
@@ -146,7 +131,7 @@ impl Sensor for Rapl {
             if let Err(err) = sensor_reader(
                 rx,
                 tx,
-                "rapl",
+                RAPL_FILENAME,
                 args,
                 init_rapl,
                 |args: &RaplConfig,
@@ -226,3 +211,12 @@ async fn read_rapl(
     readings.insert(0, readings.iter().sum());
     Ok(readings)
 }
+
+pub static RAPL_PLOT_AXIS: LazyLock<[TimeSeriesAxis; 1]> = LazyLock::new(|| {
+    [TimeSeriesAxis::sensor(
+        RAPL_FILENAME,
+        "total_smoothed",
+        "CPU Power",
+        "CPU Power (Watts)",
+    )]
+});

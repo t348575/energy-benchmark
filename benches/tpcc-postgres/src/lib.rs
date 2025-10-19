@@ -72,7 +72,7 @@ impl Bench for TpccPostgres {
         &self,
         _settings: &Settings,
         _bench_args: &dyn BenchArgs,
-        name: &str,
+        _name: &str,
     ) -> Result<CmdsResult> {
         let cmds = self
             .num_clients
@@ -84,7 +84,8 @@ impl Bench for TpccPostgres {
                 config_file: self.config_file.clone(),
                 fs_mount_opts: self.fs_mount_opts.clone(),
             })
-            .map(|bench| Cmd {
+            .enumerate()
+            .map(|(idx, bench)| Cmd {
                 args: [
                     "exec",
                     "tpcc-host",
@@ -96,13 +97,7 @@ impl Bench for TpccPostgres {
                 .into_iter()
                 .map(|x| x.to_owned())
                 .collect(),
-                hash: format!(
-                    "{:x}",
-                    md5::compute(format!(
-                        "{} {} {}",
-                        name, bench.num_clients[0], bench.warehouses
-                    ))
-                ),
+                idx,
                 bench_obj: Box::new(bench.clone()),
             })
             .collect();

@@ -18,16 +18,21 @@ cxx = "1.0"
 cxx-build = "1.0"
 thiserror = "2.0"
 itertools = "0.14"
-regex = "1.11"
-md5 = "0.8"
+regex = "1.12"
 futures = "0.3"
-rayon = "1.10"
-async-io = "2.4.0"
+rayon = "1.11"
+async-io = "2.6.0"
 csv = "1.3"
 serde = { version = "1.0", features = ["derive"] }
-tokio = { version = "1.45", features = ["full"] }
+tokio = { version = "1.48", features = ["full"] }
 common = { path = "common" }
+# left in 0.8 to avoid breaking changes
 toml = "0.8"
+
+default-sensors = { path = "sensors/default-sensors" }
+default-benches = { path = "benches/default-benches" }
+default-plots = { path = "plots/default-plots" }
+plot-common = { path = "plots/common" }
 
 [build-dependencies]
 toml_edit = "0.23"

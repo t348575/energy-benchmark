@@ -4,6 +4,7 @@ use std::{
 };
 
 use common::{
+    config::Settings,
     sensor::{Sensor, SensorArgs, SensorReply, SensorRequest},
     util::{SensorError, sensor_reader},
 };
@@ -26,6 +27,8 @@ impl SensorArgs for NetioHttpConfig {
     }
 }
 
+const NETIO_FILENAME: &str = "netio-http.csv";
+
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct NetioHttp;
 
@@ -34,9 +37,14 @@ impl Sensor for NetioHttp {
         "NetioHttp"
     }
 
+    fn filename(&self) -> &'static str {
+        NETIO_FILENAME
+    }
+
     fn start(
         &self,
         args: &dyn SensorArgs,
+        _: &Settings,
         rx: Receiver<SensorRequest>,
         tx: Sender<SensorReply>,
     ) -> Result<JoinHandle<Result<()>>> {
@@ -49,7 +57,7 @@ impl Sensor for NetioHttp {
             if let Err(err) = sensor_reader(
                 rx,
                 tx,
-                "netio-http",
+                NETIO_FILENAME,
                 args,
                 init_netio_http,
                 |args: &NetioHttpConfig,

@@ -8,7 +8,6 @@ itertools.workspace = true
 serde.workspace = true
 common.workspace = true
 typetag.workspace = true
-md5.workspace = true
 eyre.workspace = true
 async-trait.workspace = true
 serde_json.workspace = true

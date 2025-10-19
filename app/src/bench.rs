@@ -8,16 +8,20 @@ use std::{
 
 use chrono::Local;
 use common::{
-    bench::{Bench, BenchArgs, BenchmarkInfo, Cmd, CmdsResult},
+    bench::{Bench, BenchArgs, BenchInfo, BenchParams, Cmd, CmdsResult},
     config::Config,
     plot::{PlotType, plot},
     sensor::{Sensor, SensorArgs, SensorRequest},
-    util::{chown_user, remove_indices, simple_command_with_output_no_dir},
+    util::{
+        chown_user, get_cpu_topology, remove_indices, simple_command_with_output_no_dir,
+        write_one_line,
+    },
 };
 use console::style;
 use eyre::{Context, Result, bail};
 use flume::unbounded;
 use indicatif::{ProgressBar, ProgressStyle};
+use regex::Regex;
 use tokio::{
     fs::{copy, create_dir_all, read_to_string, remove_dir_all, write},
     process::Command,
@@ -48,7 +52,9 @@ pub async fn run_benchmark(config_file: String, no_progress: bool, skip_plot: bo
     );
 
     if let Some(cpu_freq) = &config.settings.cpu_freq {
-        set_cpu_freq(cpu_freq.freq, cpu_freq.freq, "performance").await.context("Set CPU frequency")?;
+        set_cpu_freq(cpu_freq.freq, cpu_freq.freq, "performance")
+            .await
+            .context("Set CPU frequency")?;
     }
 
     let progress = Progress::new(!no_progress, &config)?;
@@ -64,7 +70,7 @@ pub async fn run_benchmark(config_file: String, no_progress: bool, skip_plot: bo
             let sensor_args = get_sensor_args(&config.sensor_args, obj.as_ref())?;
             let (req_tx, req_rx) = unbounded();
             let (resp_tx, resp_rx) = unbounded();
-            sensor_handles.push(obj.start(&*sensor_args, req_rx, resp_tx)?);
+            sensor_handles.push(obj.start(&*sensor_args, &config.settings, req_rx, resp_tx)?);
             sensors.push(req_tx);
             sensor_replies.push(resp_rx);
             loaded_sensors.push(s);
@@ -98,13 +104,30 @@ pub async fn run_benchmark(config_file: String, no_progress: bool, skip_plot: bo
         std::process::exit(0);
     });
 
-    let nvme_cli_device = config
-        .settings
-        .nvme_cli_device
-        .clone()
-        .unwrap_or(config.settings.device.clone());
+    let nvme_cli_device = strip_nvme_namespace(&config.settings.device);
 
-    let mut benchmark_info = HashMap::new();
+    let device_power_states = fetch_nvme_power_states(&nvme_cli_device)
+        .await
+        .context("Fetch NVMe power states")?;
+    debug!("Fetched NVMe power states: {device_power_states:?}");
+
+    let cpu_min_freq = read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_min_freq")
+        .await?
+        .trim()
+        .parse()?;
+    let cpu_max_freq = read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq")
+        .await?
+        .trim()
+        .parse()?;
+
+    let cpu_topology = get_cpu_topology().await?;
+
+    let mut bench_info = BenchInfo {
+        param_map: HashMap::new(),
+        device_power_states,
+        cpu_freq_limits: (cpu_min_freq, cpu_max_freq),
+        cpu_topology,
+    };
     let total_experiments = config.benches.len();
     let mut current_experiment = 0;
     let mut append_spdk_power_state = false;
@@ -130,7 +153,7 @@ pub async fn run_benchmark(config_file: String, no_progress: bool, skip_plot: bo
                 curr_cmd_idx,
                 Cmd {
                     args,
-                    hash,
+                    idx,
                     bench_obj,
                 },
             ) in cmds.iter().enumerate()
@@ -187,23 +210,18 @@ pub async fn run_benchmark(config_file: String, no_progress: bool, skip_plot: bo
                         }
                     ));
 
-                    let folder_name = format!(
-                        "{}-ps{}-i{}-{}",
-                        experiment.name,
-                        power_state,
-                        i,
-                        hash.clone()
-                    );
+                    let folder_name =
+                        format!("{}-ps{}-i{}-{}", experiment.name, power_state, i, idx);
                     let final_path = data_path.join(&folder_name);
                     dirs.push(folder_name.clone());
-                    benchmark_info.insert(
+                    bench_info.param_map.insert(
                         folder_name,
-                        BenchmarkInfo {
+                        BenchParams {
                             args: bench_obj.clone(),
                             power_state: *power_state,
                             iteration: i,
                             name: experiment.name.clone(),
-                            hash: hash.clone(),
+                            idx: *idx,
                         },
                     );
                     create_dir_all(&final_path).await?;
@@ -289,7 +307,7 @@ pub async fn run_benchmark(config_file: String, no_progress: bool, skip_plot: bo
                             debug!("Moving to next test");
                             write(
                                 results_path.join("info.json"),
-                                serde_json::to_string(&benchmark_info)?,
+                                serde_json::to_string_pretty(&bench_info)?,
                             )
                             .await?;
                             break;
@@ -297,7 +315,7 @@ pub async fn run_benchmark(config_file: String, no_progress: bool, skip_plot: bo
 
                         if num_outliers > 0 {
                             for item in &outliers {
-                                benchmark_info.remove(&dirs[*item]);
+                                bench_info.param_map.remove(&dirs[*item]);
                                 debug!("Removing {}", dirs[*item]);
                                 remove_dir_all(&data_path.join(&dirs[*item])).await?;
                                 progress.increment_total().await;
@@ -307,7 +325,7 @@ pub async fn run_benchmark(config_file: String, no_progress: bool, skip_plot: bo
 
                         write(
                             results_path.join("info.json"),
-                            serde_json::to_string(&benchmark_info)?,
+                            serde_json::to_string_pretty(&bench_info)?,
                         )
                         .await?;
                         if num_outliers == 0 {
@@ -337,7 +355,7 @@ pub async fn run_benchmark(config_file: String, no_progress: bool, skip_plot: bo
                 &data_path,
                 &plot_path,
                 &config,
-                &benchmark_info,
+                &bench_info,
                 experiment_dirs.clone(),
                 &config.settings,
                 &mut Vec::new(),
@@ -369,8 +387,8 @@ pub async fn run_benchmark(config_file: String, no_progress: bool, skip_plot: bo
                 &data_path,
                 &plot_path,
                 &config,
-                &benchmark_info,
-                benchmark_info.keys().cloned().collect(),
+                &bench_info,
+                bench_info.param_map.keys().cloned().collect(),
                 &config.settings,
                 &mut completed_dirs,
             )
@@ -379,9 +397,16 @@ pub async fn run_benchmark(config_file: String, no_progress: bool, skip_plot: bo
     }
 
     if let Some(cpu_freq) = &config.settings.cpu_freq {
-        let min_cpu_freq = read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_min_freq").await?;
-        let max_cpu_freq = read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq").await?;
-        set_cpu_freq(max_cpu_freq.trim().parse()?, min_cpu_freq.trim().parse()?, &cpu_freq.default_governor).await?;
+        let min_cpu_freq =
+            read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_min_freq").await?;
+        let max_cpu_freq =
+            read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq").await?;
+        set_cpu_freq(
+            max_cpu_freq.trim().parse()?,
+            min_cpu_freq.trim().parse()?,
+            &cpu_freq.default_governor,
+        )
+        .await?;
     }
 
     debug!("Exiting");
@@ -584,9 +609,48 @@ async fn set_cpu_freq(max_cpu_freq: usize, min_cpu_freq: usize, governor: &str) 
 
     for cpu in cpus {
         let cpu = format!("/sys/devices/system/cpu/cpu{cpu}/cpufreq");
-        simple_command_with_output_no_dir("bash", &["-c", &format!(r#"echo {governor} | sudo tee {cpu}/scaling_governor"#)]).await?;
-        simple_command_with_output_no_dir("bash", &["-c", &format!(r#"echo {max_cpu_freq} | sudo tee {cpu}/scaling_max_freq"#)]).await?;
-        simple_command_with_output_no_dir("bash", &["-c", &format!(r#"echo {min_cpu_freq} | sudo tee {cpu}/scaling_min_freq"#)]).await?;
+        for (value, var) in [
+            (governor, "scaling_governor"),
+            (&max_cpu_freq.to_string(), "scaling_max_freq"),
+            (&min_cpu_freq.to_string(), "scaling_min_freq"),
+        ] {
+            write_one_line(format!("{cpu}/{var}"), value).await?;
+        }
     }
     Ok(())
+}
+
+async fn fetch_nvme_power_states(device: &str) -> Result<Vec<(f64, String)>> {
+    let output = simple_command_with_output_no_dir("nvme", &["id-ctrl", device]).await?;
+    let re = Regex::new(r"(?i)ps\s+(\d+)\s*:.*?\bmp:\s*([0-9]*\.?[0-9]+)\s*([mM]?[wW])").unwrap();
+    let mut result = Vec::new();
+
+    for caps in re.captures_iter(&output) {
+        let idx: u8 = caps[1].parse().unwrap();
+        let val: f64 = caps[2].parse().unwrap();
+        let unit = caps[3].to_ascii_lowercase();
+
+        let mw = match unit.as_str() {
+            "w" => val,
+            "mw" => val / 1000.0,
+            _ => continue,
+        };
+
+        result.push((idx, mw, format!("{}{}", &caps[2], &caps[3])));
+    }
+
+    result.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+    Ok(result.into_iter().map(|x| (x.1, x.2)).collect())
+}
+
+fn strip_nvme_namespace(device: &str) -> String {
+    if let Some(captures) = device.strip_prefix("/dev/nvme") {
+        if let Some((base, _partition)) = captures.split_once('n') {
+            format!("/dev/nvme{}", base)
+        } else {
+            device.to_string()
+        }
+    } else {
+        device.to_string()
+    }
 }

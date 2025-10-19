@@ -1,25 +1,26 @@
 use std::{
     collections::{HashMap, HashSet},
-    fs::write,
     path::{Path, PathBuf},
 };
 
 use common::{
-    bench::BenchmarkInfo,
+    bench::{BenchInfo, BenchParams},
     config::{Config, Settings},
-    plot::{Plot, PlotType},
+    plot::{HeatmapJob, Plot, PlotType, collect_run_groups, ensure_plot_dirs, render_heatmaps},
     util::{
-        Filesystem, SectionStats, calculate_sectioned, parse_data_size, parse_trace, plot_python,
-        power_energy_calculator, write_csv,
+        BarChartKind, Filesystem, SectionStats, calculate_sectioned, make_power_state_bar_config,
+        parse_data_size, parse_trace, plot_bar_chart, plot_time_series, power_energy_calculator,
+        read_json_file, write_csv,
     },
 };
-use eyre::{Context, ContextCompat, Result};
+use eyre::{Context, Result, bail};
 use filebench::{Filebench, result::FilebenchSummary};
 use futures::future::join_all;
 use itertools::Itertools;
+use plot_common::default_timeseries_plot;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
-use tokio::fs::{create_dir_all, read_to_string};
+use tokio::fs::read_to_string;
 use tracing::debug;
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -30,7 +31,7 @@ pub struct FilebenchBasic {
 #[derive(Debug, Clone)]
 struct PlotEntry {
     result: FilebenchSummary,
-    info: BenchmarkInfo,
+    info: BenchParams,
     args: Filebench,
     ssd_power: SectionedCalculation,
     cpu_power: SectionedCalculation,
@@ -50,7 +51,7 @@ impl Plot for FilebenchBasic {
         data_path: &Path,
         plot_path: &Path,
         _config: &Config,
-        info: &HashMap<String, BenchmarkInfo>,
+        bench_info: &BenchInfo,
         dirs: Vec<String>,
         settings: &Settings,
         completed_dirs: &mut Vec<String>,
@@ -60,43 +61,26 @@ impl Plot for FilebenchBasic {
         }
 
         debug!("Got {} dirs", dirs.len());
-        let mut groups = HashMap::new();
-        for run in dirs {
-            let item = info.get(&run).context("No info for run")?;
-            let key = (item.name.clone(), item.power_state, item.hash.clone());
-            groups.entry(key).or_insert_with(|| {
-                completed_dirs.push(run.clone());
-                (run, item.clone())
-            });
-        }
-
+        let groups = collect_run_groups(dirs, &bench_info.param_map, completed_dirs)?;
         if groups.is_empty() {
             return Ok(());
         }
-
-        async fn read_results_json(folder: PathBuf) -> Result<FilebenchSummary> {
-            let data = read_to_string(folder.join("results.json")).await?;
-            serde_json::from_str(&data).context("Parse results.json")
-        }
-
-        let entries = groups
-            .drain()
-            .map(|(_, (folder, info))| {
-                let specific_data_path = data_path.join(folder.clone());
-                async move {
-                    (
-                        read_results_json(data_path.join(folder.clone())).await,
-                        read_to_string(specific_data_path.join("powersensor3.csv")).await,
-                        read_to_string(specific_data_path.join("rapl.csv")).await,
-                        read_to_string(specific_data_path.join("markers.csv")).await,
-                        folder,
-                        info,
-                    )
-                }
-            })
-            .collect::<Vec<_>>();
-
-        let entries = join_all(entries).await;
+        let entries = join_all(groups.iter().map(|group| {
+            let run_dir = data_path.join(&group.dir);
+            let dir = group.dir.clone();
+            let info = group.info.clone();
+            async move {
+                (
+                    read_json_file::<FilebenchSummary>(run_dir.join("results.json")).await,
+                    read_to_string(run_dir.join("powersensor3.csv")).await,
+                    read_to_string(run_dir.join("rapl.csv")).await,
+                    read_to_string(run_dir.join("markers.csv")).await,
+                    dir,
+                    info,
+                )
+            }
+        }))
+        .await;
         let ready_entries = entries
             .into_par_iter()
             .map(|item| {
@@ -109,7 +93,7 @@ impl Plot for FilebenchBasic {
                     Some(&markers),
                     &rapl,
                     &["Total"],
-                    &[(0.0, 200.0)],
+                    &[(0.0, settings.cpu_max_power_watts)],
                     power_energy_calculator,
                     None,
                 )
@@ -119,7 +103,7 @@ impl Plot for FilebenchBasic {
                     Some(&markers),
                     &powersensor3,
                     &["Total"],
-                    &[(0.0, 8.5)],
+                    &[(0.0, bench_info.device_power_states[0].0)],
                     power_energy_calculator,
                     None,
                 )
@@ -153,17 +137,15 @@ impl Plot for FilebenchBasic {
         let power_dir_ssd = plot_path.join("power-ssd");
         let iops_dir = plot_path.join("iops");
         let efficiency_dir = plot_path.join("efficiency");
-        let dirs = [
-            &throughput_dir,
-            &latency_dir,
-            &power_dir_cpu,
-            &power_dir_ssd,
-            &iops_dir,
-            &efficiency_dir,
+        let dir_list = vec![
+            throughput_dir.clone(),
+            latency_dir.clone(),
+            power_dir_cpu.clone(),
+            power_dir_ssd.clone(),
+            iops_dir.clone(),
+            efficiency_dir.clone(),
         ];
-        for dir in join_all(dirs.iter().map(create_dir_all)).await.into_iter() {
-            dir?;
-        }
+        ensure_plot_dirs(&dir_list).await?;
 
         let experiment_name = ready_entries[0].info.name.clone();
         let plot_jobs: Vec<(
@@ -306,7 +288,7 @@ impl Plot for FilebenchBasic {
 
         let results = plot_jobs
             .into_par_iter()
-            .map(|x| self.bar_plot(x.0, x.1, x.2, x.3, x.4, x.5, x.6))
+            .map(|x| self.bar_plot(x.0, x.1, x.2, x.3, x.4, x.5, x.6, bench_info))
             .collect::<Vec<_>>();
         for item in results {
             item?;
@@ -328,6 +310,7 @@ impl FilebenchBasic {
         y_name: Option<&str>,
         x_label: &str,
         get_mean: fn(&PlotEntry) -> f64,
+        bench_info: &BenchInfo,
     ) -> Result<()> {
         let num_power_states = settings.nvme_power_states.clone().unwrap_or(vec![0]).len();
         let mut results = vec![vec![]; num_power_states];
@@ -364,31 +347,14 @@ impl FilebenchBasic {
             .map(|x| x.iter().map(|x| x.1).collect::<Vec<_>>())
             .collect::<Vec<_>>();
 
-        let plot_data_dir = filepath.parent().unwrap().join("plot_data");
-        if !plot_data_dir.exists() {
-            std::fs::create_dir_all(&plot_data_dir)?;
-        }
-        let plot_data_file = plot_data_dir.join(format!(
-            "{}.json",
-            &filepath.file_stem().unwrap().to_str().unwrap()
-        ));
-        write(&plot_data_file, &serde_json::to_string(&results)?)?;
-
-        let labels = labels.join(",");
-        let mut args = vec![
-            ("--data", plot_data_file.to_str().unwrap()),
-            ("--filepath", filepath.to_str().unwrap()),
-            ("--x_label_name", x_label),
-            ("--experiment_name", &experiment_name),
-            ("--labels", &labels),
-        ];
-
-        if let Some(name) = y_name {
-            args.push(("--name", name));
-        }
-
-        plot_python(plotting_file, &args)?;
-        Ok(())
+        let chart_kind = match plotting_file {
+            "throughput" => BarChartKind::Throughput,
+            "latency" => BarChartKind::Latency,
+            "power" => BarChartKind::Power,
+            other => bail!("Unsupported plotting file {other}"),
+        };
+        let config = make_power_state_bar_config(chart_kind, x_label, &experiment_name, y_name);
+        plot_bar_chart(&filepath, results, labels, config, bench_info)
     }
 
     async fn efficiency(
@@ -460,112 +426,74 @@ impl FilebenchBasic {
             edp[x][y] = item.10;
         }
 
-        let plot_data_dir = plot_path.join("plot_data");
-        if !plot_data_dir.exists() {
-            create_dir_all(&plot_data_dir).await?;
-        }
-
-        fn write_json<T: Serialize>(
-            data: &T,
-            path: &Path,
-            plot_data_dir: &Path,
-        ) -> Result<PathBuf> {
-            let p = plot_data_dir.join(format!(
-                "{}.json",
-                path.file_stem().unwrap().to_str().unwrap()
-            ));
-            write(&p, &serde_json::to_string(data)?)?;
-            Ok(p)
-        }
-
-        let jobs = [
-            (
-                plot_path.join(format!("{}-iops-j-overall.pdf", &experiment_name)),
-                iops_j_overall,
-                "IOPS/J",
-                "overall",
-                false,
-            ),
-            (
-                plot_path.join(format!("{}-iops-j-init.pdf", &experiment_name)),
-                iops_j_init,
-                "IOPS/J",
-                "init",
-                false,
-            ),
-            (
-                plot_path.join(format!("{}-iops-j-benchmark.pdf", &experiment_name)),
-                iops_j_benchmark,
-                "IOPS/J",
-                "benchmark",
-                false,
-            ),
-            (
-                plot_path.join(format!("{}-iops-j-post-benchmark.pdf", &experiment_name)),
-                iops_j_post_benchmark,
-                "IOPS/J",
-                "post-benchmark",
-                false,
-            ),
-            (
-                plot_path.join(format!("{}-bytes-j-overall.pdf", &experiment_name)),
-                bytes_j_overall,
-                "Bytes/J",
-                "overall",
-                false,
-            ),
-            (
-                plot_path.join(format!("{}-bytes-j-init.pdf", &experiment_name)),
-                bytes_j_init,
-                "Bytes/J",
-                "init",
-                false,
-            ),
-            (
-                plot_path.join(format!("{}-bytes-j-benchmark.pdf", &experiment_name)),
-                bytes_j_benchmark,
-                "Bytes/J",
-                "benchmark",
-                false,
-            ),
-            (
-                plot_path.join(format!("{}-bytes-j-post-benchmark.pdf", &experiment_name)),
-                bytes_j_post_benchmark,
-                "Bytes/J",
-                "post-benchmark",
-                false,
-            ),
-            (
-                plot_path.join(format!("{}-edp.pdf", &experiment_name)),
-                edp,
-                "EDP",
-                "edp",
-                true,
-            ),
+        let jobs = vec![
+            HeatmapJob {
+                filepath: plot_path.join(format!("{}-iops-j-overall.pdf", &experiment_name)),
+                data: iops_j_overall,
+                title: "IOPS/J",
+                x_label: "overall",
+                reverse: false,
+            },
+            HeatmapJob {
+                filepath: plot_path.join(format!("{}-iops-j-init.pdf", &experiment_name)),
+                data: iops_j_init,
+                title: "IOPS/J",
+                x_label: "init",
+                reverse: false,
+            },
+            HeatmapJob {
+                filepath: plot_path.join(format!("{}-iops-j-benchmark.pdf", &experiment_name)),
+                data: iops_j_benchmark,
+                title: "IOPS/J",
+                x_label: "benchmark",
+                reverse: false,
+            },
+            HeatmapJob {
+                filepath: plot_path.join(format!("{}-iops-j-post-benchmark.pdf", &experiment_name)),
+                data: iops_j_post_benchmark,
+                title: "IOPS/J",
+                x_label: "post-benchmark",
+                reverse: false,
+            },
+            HeatmapJob {
+                filepath: plot_path.join(format!("{}-bytes-j-overall.pdf", &experiment_name)),
+                data: bytes_j_overall,
+                title: "Bytes/J",
+                x_label: "overall",
+                reverse: false,
+            },
+            HeatmapJob {
+                filepath: plot_path.join(format!("{}-bytes-j-init.pdf", &experiment_name)),
+                data: bytes_j_init,
+                title: "Bytes/J",
+                x_label: "init",
+                reverse: false,
+            },
+            HeatmapJob {
+                filepath: plot_path.join(format!("{}-bytes-j-benchmark.pdf", &experiment_name)),
+                data: bytes_j_benchmark,
+                title: "Bytes/J",
+                x_label: "benchmark",
+                reverse: false,
+            },
+            HeatmapJob {
+                filepath: plot_path
+                    .join(format!("{}-bytes-j-post-benchmark.pdf", &experiment_name)),
+                data: bytes_j_post_benchmark,
+                title: "Bytes/J",
+                x_label: "post-benchmark",
+                reverse: false,
+            },
+            HeatmapJob {
+                filepath: plot_path.join(format!("{}-edp.pdf", &experiment_name)),
+                data: edp,
+                title: "EDP",
+                x_label: "edp",
+                reverse: true,
+            },
         ];
 
-        let results = jobs
-            .par_iter()
-            .map(|(filepath, data, title, x_label, reverse)| {
-                let data_file = write_json(&data, filepath, &plot_data_dir).unwrap();
-                plot_python(
-                    "efficiency",
-                    &[
-                        ("--data", data_file.to_str().unwrap()),
-                        ("--filepath", filepath.to_str().unwrap()),
-                        ("--col_labels", &labels.join(",")),
-                        ("--x_label", x_label),
-                        ("--experiment_name", &experiment_name),
-                        ("--title", title),
-                        ("--reverse", if *reverse { "1" } else { "0" }),
-                    ],
-                )
-            })
-            .collect::<Vec<_>>();
-        for item in results {
-            item?;
-        }
-        Ok(())
+        render_heatmaps(&experiment_name, &labels, plot_path, &jobs)
     }
 
     fn get_order_labels(
@@ -634,31 +562,35 @@ impl Plot for FilebenchPowerTime {
         data_path: &Path,
         plot_path: &Path,
         _config_yaml: &Config,
-        info: &HashMap<String, BenchmarkInfo>,
+        bench_info: &BenchInfo,
         dirs: Vec<String>,
         _: &Settings,
-        _: &mut Vec<String>,
+        completed_dirs: &mut Vec<String>,
     ) -> Result<()> {
         if *plot_type == PlotType::Total {
             return Ok(());
         }
 
-        let mut groups = HashMap::new();
-        for run in dirs {
-            let item = info.get(&run).context("No info for run")?;
-            let key = (item.name.clone(), item.power_state, item.hash.clone());
-            groups.entry(key).or_insert_with(|| (run, item.clone()));
+        let groups = collect_run_groups(dirs, &bench_info.param_map, completed_dirs)?;
+        if groups.is_empty() {
+            return Ok(());
         }
 
-        let entries = groups.drain().map(|(_, x)| x).collect::<Vec<_>>();
-
         let dir = plot_path.join("filebench_time");
-        let inner_dir = dir.join(&entries[0].1.name);
-        create_dir_all(&inner_dir).await?;
-        create_dir_all(inner_dir.join("plot_data")).await?;
-        let results = entries
-            .into_par_iter()
-            .map(|data| self.filebench_time(data_path.join(data.0.clone()), &inner_dir, &data.1))
+        let inner_dir = dir.join(&groups[0].info.name);
+        let dir_list = vec![dir.clone(), inner_dir.clone(), inner_dir.join("plot_data")];
+        ensure_plot_dirs(&dir_list).await?;
+
+        let results = groups
+            .par_iter()
+            .map(|data| {
+                self.filebench_time(
+                    data_path.join(&data.dir),
+                    &inner_dir,
+                    &data.info,
+                    bench_info,
+                )
+            })
             .collect::<Vec<_>>();
         for item in results {
             item?;
@@ -672,7 +604,8 @@ impl FilebenchPowerTime {
         &self,
         data_path: PathBuf,
         plot_path: &Path,
-        info: &BenchmarkInfo,
+        info: &BenchParams,
+        bench_info: &BenchInfo,
     ) -> Result<()> {
         let config = info.args.downcast_ref::<Filebench>().unwrap();
         let vars = &config.vars.as_ref().unwrap()[0];
@@ -694,18 +627,16 @@ impl FilebenchPowerTime {
             )?;
         }
 
-        let mut args = vec![
-            ("--plot_dir", plot_path.to_str().unwrap()),
-            ("--results_dir", data_path.to_str().unwrap()),
-            ("--name", &name),
-        ]
-        .into_iter()
-        .map(|x| (x.0.to_owned(), x.1.to_owned()))
-        .collect::<Vec<_>>();
-        if let Some(offset) = &self.offset {
-            args.push(("--offset".to_owned(), offset.to_string()));
-        }
-        plot_python("filebench_time", &args)?;
+        plot_time_series(
+            default_timeseries_plot(
+                default_benches::BenchKind::Filebench,
+                plot_path.to_path_buf(),
+                data_path,
+                name,
+                bench_info,
+            )
+            .with_offset(self.offset),
+        )?;
         Ok(())
     }
 }

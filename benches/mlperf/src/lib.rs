@@ -100,7 +100,8 @@ impl Bench for Mlperf {
                 n_accelerators: vec![*n_accelerators],
                 ..self.clone()
             })
-            .map(|bench| {
+            .enumerate()
+            .map(|(idx, bench)| {
                 let mut args = vec![
                     "mlpstorage".to_owned(),
                     "training".to_owned(),
@@ -120,10 +121,9 @@ impl Bench for Mlperf {
                     args.push(format!("{k}={v}"));
                 }
 
-                let hash = format!("{:x}", md5::compute(args.join(" ")));
                 Cmd {
                     args,
-                    hash,
+                    idx,
                     bench_obj: Box::new(bench.clone()),
                 }
             })

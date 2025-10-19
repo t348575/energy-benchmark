@@ -1,21 +1,24 @@
 use std::{
     collections::{HashMap, HashSet},
-    fs::write,
     path::{Path, PathBuf},
 };
 
 use common::{
-    bench::BenchmarkInfo,
+    bench::{BenchInfo, BenchParams},
     config::{Config, Settings},
-    plot::{Plot, PlotType},
-    util::{SectionStats, calculate_sectioned, plot_python, power_energy_calculator},
+    plot::{HeatmapJob, Plot, PlotType, collect_run_groups, ensure_plot_dirs, render_heatmaps},
+    util::{
+        BarChartKind, SectionStats, calculate_sectioned, make_power_state_bar_config,
+        plot_bar_chart, plot_time_series, power_energy_calculator, read_json_file,
+    },
 };
-use eyre::{Context, ContextCompat, Result};
+use eyre::{Context, Result, bail};
 use futures::future::join_all;
 use itertools::Itertools;
+use plot_common::default_timeseries_plot;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
-use tokio::fs::{create_dir_all, read_to_string};
+use tokio::fs::read_to_string;
 use tpcc_postgres::{TpccPostgres, result::TpccPostgresMetrics};
 use tracing::debug;
 
@@ -25,7 +28,7 @@ pub struct TpccBasic;
 #[derive(Debug, Clone)]
 struct PlotEntry {
     result: TpccPostgresMetrics,
-    info: BenchmarkInfo,
+    info: BenchParams,
     args: TpccPostgres,
     ssd_power: SectionStats,
     cpu_power: SectionStats,
@@ -44,7 +47,7 @@ impl Plot for TpccBasic {
         data_path: &Path,
         plot_path: &Path,
         _config: &Config,
-        info: &HashMap<String, BenchmarkInfo>,
+        bench_info: &BenchInfo,
         dirs: Vec<String>,
         settings: &Settings,
         completed_dirs: &mut Vec<String>,
@@ -54,42 +57,27 @@ impl Plot for TpccBasic {
         }
 
         debug!("Got {} dirs", dirs.len());
-        let mut groups = HashMap::new();
-        for run in dirs {
-            let item = info.get(&run).context("No info for run")?;
-            let key = (item.name.clone(), item.power_state, item.hash.clone());
-            groups.entry(key).or_insert_with(|| {
-                completed_dirs.push(run.clone());
-                (run, item.clone())
-            });
-        }
-
+        let groups = collect_run_groups(dirs, &bench_info.param_map, completed_dirs)?;
         if groups.is_empty() {
             return Ok(());
         }
-
-        async fn read_results_json(folder: PathBuf) -> Result<TpccPostgresMetrics> {
-            let data = read_to_string(folder.join("result.json")).await?;
-            serde_json::from_str(&data).context("Parse result.json")
-        }
-
-        let entries = groups
-            .drain()
-            .map(|(_, (folder, info))| {
-                let specific_data_path = data_path.join(folder.clone());
-                async move {
-                    (
-                        read_results_json(data_path.join(folder.clone())).await,
-                        read_to_string(specific_data_path.join("powersensor3.csv")).await,
-                        read_to_string(specific_data_path.join("rapl.csv")).await,
-                        folder,
-                        info,
-                    )
-                }
-            })
-            .collect::<Vec<_>>();
-
-        let entries = join_all(entries).await;
+        let entries = join_all(groups.iter().map(|group| {
+            let result_path = data_path.join(&group.dir).join("result.json");
+            let ps3_path = data_path.join(&group.dir).join("powersensor3.csv");
+            let rapl_path = data_path.join(&group.dir).join("rapl.csv");
+            let dir = group.dir.clone();
+            let info = group.info.clone();
+            async move {
+                (
+                    read_json_file::<TpccPostgresMetrics>(&result_path).await,
+                    read_to_string(ps3_path).await,
+                    read_to_string(rapl_path).await,
+                    dir,
+                    info,
+                )
+            }
+        }))
+        .await;
         let ready_entries = entries
             .into_par_iter()
             .map(|item| {
@@ -101,7 +89,7 @@ impl Plot for TpccBasic {
                     None,
                     &rapl,
                     &["Total"],
-                    &[(0.0, 200.0)],
+                    &[(0.0, settings.cpu_max_power_watts)],
                     power_energy_calculator,
                     None,
                 )
@@ -111,7 +99,7 @@ impl Plot for TpccBasic {
                     None,
                     &powersensor3,
                     &["Total"],
-                    &[(0.0, 8.5)],
+                    &[(0.0, bench_info.device_power_states[0].0)],
                     power_energy_calculator,
                     None,
                 )
@@ -132,10 +120,12 @@ impl Plot for TpccBasic {
         let throughput_dir = plot_path.join("throughput");
         let efficiency_dir = plot_path.join("efficiency");
         let power_dir = plot_path.join("power");
-        let dirs = [&power_dir, &throughput_dir, &efficiency_dir];
-        for dir in join_all(dirs.iter().map(create_dir_all)).await.into_iter() {
-            dir?;
-        }
+        let dir_list = vec![
+            throughput_dir.clone(),
+            efficiency_dir.clone(),
+            power_dir.clone(),
+        ];
+        ensure_plot_dirs(&dir_list).await?;
 
         let plot_jobs: Vec<(
             Vec<PlotEntry>,
@@ -189,7 +179,7 @@ impl Plot for TpccBasic {
 
         let results = plot_jobs
             .into_par_iter()
-            .map(|x| self.bar_plot(x.0, x.1, x.2, x.3, x.4, x.5))
+            .map(|x| self.bar_plot(x.0, x.1, x.2, x.3, x.4, x.5, bench_info))
             .collect::<Vec<_>>();
         for item in results {
             item?;
@@ -210,6 +200,7 @@ impl TpccBasic {
         plotting_file: &str,
         x_label: &str,
         get_value: fn(&PlotEntry) -> f64,
+        bench_info: &BenchInfo,
     ) -> Result<()> {
         let num_power_states = settings.nvme_power_states.clone().unwrap_or(vec![0]).len();
         let mut results = vec![vec![]; num_power_states];
@@ -240,28 +231,15 @@ impl TpccBasic {
             .map(|x| x.iter().map(|x| x.1).collect::<Vec<_>>())
             .collect::<Vec<_>>();
 
-        let plot_data_dir = filepath.parent().unwrap().join("plot_data");
-        if !plot_data_dir.exists() {
-            std::fs::create_dir_all(&plot_data_dir)?;
-        }
-        let plot_data_file = plot_data_dir.join(format!(
-            "{}.json",
-            &filepath.file_stem().unwrap().to_str().unwrap()
-        ));
-        write(&plot_data_file, &serde_json::to_string(&results)?)?;
-
-        let labels = labels.join(",");
-        plot_python(
-            plotting_file,
-            &[
-                ("--data", plot_data_file.to_str().unwrap()),
-                ("--filepath", filepath.to_str().unwrap()),
-                ("--x_label_name", x_label),
-                ("--experiment_name", &experiment_name),
-                ("--labels", &labels),
-            ],
-        )?;
-        Ok(())
+        let chart_kind = match plotting_file {
+            "throughput" => BarChartKind::Throughput,
+            "power" => BarChartKind::Power,
+            other => {
+                bail!("Unsupported plotting file {other}");
+            }
+        };
+        let config = make_power_state_bar_config(chart_kind, x_label, &experiment_name, None);
+        plot_bar_chart(&filepath, results, labels, config, bench_info)
     }
 
     async fn efficiency(
@@ -301,54 +279,15 @@ impl TpccBasic {
             ops_j[x][y] = item.2;
         }
 
-        let plot_data_dir = plot_path.join("plot_data");
-        if !plot_data_dir.exists() {
-            create_dir_all(&plot_data_dir).await?;
-        }
+        let jobs = vec![HeatmapJob {
+            filepath: plot_path.join(format!("{}-iops-j.pdf", &experiment_name)),
+            data: ops_j,
+            title: "TPMC/J",
+            x_label: "overall",
+            reverse: false,
+        }];
 
-        fn write_json<T: Serialize>(
-            data: &T,
-            path: &Path,
-            plot_data_dir: &Path,
-        ) -> Result<PathBuf> {
-            let p = plot_data_dir.join(format!(
-                "{}.json",
-                path.file_stem().unwrap().to_str().unwrap()
-            ));
-            write(&p, &serde_json::to_string(data)?)?;
-            Ok(p)
-        }
-
-        let jobs = [(
-            plot_path.join(format!("{}-iops-j.pdf", &experiment_name)),
-            ops_j,
-            "TPMC/J",
-            "overall",
-            false,
-        )];
-
-        let results = jobs
-            .par_iter()
-            .map(|(filepath, data, title, x_label, reverse)| {
-                let data_file = write_json(&data, filepath, &plot_data_dir).unwrap();
-                plot_python(
-                    "efficiency",
-                    &[
-                        ("--data", data_file.to_str().unwrap()),
-                        ("--filepath", filepath.to_str().unwrap()),
-                        ("--col_labels", &labels.join(",")),
-                        ("--x_label", x_label),
-                        ("--experiment_name", &experiment_name),
-                        ("--title", title),
-                        ("--reverse", if *reverse { "1" } else { "0" }),
-                    ],
-                )
-            })
-            .collect::<Vec<_>>();
-        for item in results {
-            item?;
-        }
-        Ok(())
+        render_heatmaps(&experiment_name, &labels, plot_path, &jobs)
     }
 
     fn get_order_labels(
@@ -389,59 +328,61 @@ impl Plot for TpccPowerTime {
         data_path: &Path,
         plot_path: &Path,
         _config_yaml: &Config,
-        info: &HashMap<String, BenchmarkInfo>,
+        bench_info: &BenchInfo,
         dirs: Vec<String>,
         _: &Settings,
-        _: &mut Vec<String>,
+        completed_dirs: &mut Vec<String>,
     ) -> Result<()> {
         if *plot_type == PlotType::Total {
             return Ok(());
         }
 
-        let mut groups = HashMap::new();
-        for run in dirs {
-            let item = info.get(&run).context("No info for run")?;
-            let key = (item.name.clone(), item.power_state, item.hash.clone());
-            groups.entry(key).or_insert_with(|| (run, item.clone()));
+        let groups = collect_run_groups(dirs, &bench_info.param_map, completed_dirs)?;
+        if groups.is_empty() {
+            return Ok(());
         }
 
-        let entries = groups.drain().map(|(_, x)| x).collect::<Vec<_>>();
-
         let dir = plot_path.join("tpcc_time");
-        let inner_dir = dir.join(&entries[0].1.name);
-        create_dir_all(&inner_dir).await?;
-        create_dir_all(inner_dir.join("plot_data")).await?;
-        let results = entries
-            .into_iter()
-            .map(|data| self.tpcc_time(data_path.join(data.0.clone()), &inner_dir, &data.1))
-            .collect::<Vec<_>>();
-        for item in results {
-            item?;
+        let inner_dir = dir.join(&groups[0].info.name);
+        let dir_list = vec![dir.clone(), inner_dir.clone(), inner_dir.join("plot_data")];
+        ensure_plot_dirs(&dir_list).await?;
+
+        for group in &groups {
+            self.tpcc_time(
+                data_path.join(&group.dir),
+                &inner_dir,
+                &group.info,
+                bench_info,
+            )?;
         }
         Ok(())
     }
 }
 
 impl TpccPowerTime {
-    fn tpcc_time(&self, data_path: PathBuf, plot_path: &Path, info: &BenchmarkInfo) -> Result<()> {
+    fn tpcc_time(
+        &self,
+        data_path: PathBuf,
+        plot_path: &Path,
+        info: &BenchParams,
+        bench_info: &BenchInfo,
+    ) -> Result<()> {
         let config = info.args.downcast_ref::<TpccPostgres>().unwrap();
         let name = format!(
             "{}-ps{}-{}",
             info.name, info.power_state, config.num_clients[0]
         );
 
-        let mut args = vec![
-            ("--plot_dir", plot_path.to_str().unwrap()),
-            ("--results_dir", data_path.to_str().unwrap()),
-            ("--name", &name),
-        ]
-        .into_iter()
-        .map(|x| (x.0.to_owned(), x.1.to_owned()))
-        .collect::<Vec<_>>();
-        if let Some(offset) = &self.offset {
-            args.push(("--offset".to_owned(), offset.to_string()));
-        }
-        plot_python("tpcc_time", &args)?;
+        plot_time_series(
+            default_timeseries_plot(
+                default_benches::BenchKind::TpccPostgres,
+                plot_path.to_path_buf(),
+                data_path,
+                name,
+                bench_info,
+            )
+            .with_offset(self.offset),
+        )?;
         Ok(())
     }
 }

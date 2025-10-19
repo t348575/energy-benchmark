@@ -26,10 +26,26 @@ pub fn include_benches(_: TokenStream) -> TokenStream {
     }
 
     quote! {
+        #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+        pub enum BenchKind {
+            #(#benches_caps),*
+        }
+
         pub fn init_benches() {
             #(
                 serde_json::to_string(&#benches::#benches_caps::default()).unwrap();
             )*
+        }
+
+        impl BenchKind {
+            pub fn name(&self) -> &'static str {
+                use common::bench::Bench;
+                match *self {
+                    #(
+                        BenchKind::#benches_caps => #benches::#benches_caps::default().name(),
+                    )*
+                }
+            }
         }
     }
     .into()
@@ -51,13 +67,29 @@ pub fn include_sensors(_: TokenStream) -> TokenStream {
     }
 
     quote! {
+        pub enum SensorKind {
+            #(#sensors_caps),*
+        }
+
         pub static SENSORS: std::sync::OnceLock<tokio::sync::Mutex<Vec<Box<dyn common::sensor::Sensor>>>> = std::sync::OnceLock::new();
 
         pub fn init_sensors() {
             SENSORS.set(tokio::sync::Mutex::new(vec![#(Box::new(#sensors::#sensors_caps::default()),)*])).unwrap();
+            // hack to prevent serde issues
             #(
                 serde_json::to_string(&#sensors::#sensors_caps::default()).unwrap();
             )*
+        }
+
+        impl SensorKind {
+            pub fn filename(&self) -> &'static str {
+                use common::sensor::Sensor;
+                match *self {
+                    #(
+                        SensorKind::#sensors_caps => #sensors::#sensors_caps::default().filename(),
+                    )*
+                }
+            }
         }
     }
     .into()

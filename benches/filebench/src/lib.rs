@@ -102,7 +102,8 @@ impl Bench for Filebench {
                 #[cfg(feature = "prefill")]
                 prefill: self.prefill.clone(),
             })
-            .map(|bench| {
+            .enumerate()
+            .map(|(idx, bench)| {
                 let mut args = Vec::new();
                 if is_numa {
                     let numa = settings.numa.as_ref().unwrap();
@@ -123,10 +124,9 @@ impl Bench for Filebench {
                 hash_args.push(format!("{:?}", bench.fs[0]));
                 hash_args.push(bench.runtime.to_string());
 
-                let hash = format!("{:x}", md5::compute(hash_args.join(" ")));
                 Cmd {
                     args,
-                    hash,
+                    idx,
                     bench_obj: Box::new(bench),
                 }
             })

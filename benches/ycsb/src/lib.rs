@@ -124,8 +124,6 @@ impl Bench for Ycsb {
         run.push("run".to_owned());
         run.extend(continued_args.clone());
 
-        let hash_load = format!("{:x}", md5::compute(load.join(" ")));
-        let hash_run = format!("{:x}", md5::compute(run.join(" ")));
         let mut load_obj = self.clone();
         load_obj._ycsb_op_type = Some(OpType::Load);
         let mut run_obj = self.clone();
@@ -133,12 +131,12 @@ impl Bench for Ycsb {
         let cmds = vec![
             Cmd {
                 args: load,
-                hash: hash_load,
+                idx: 0,
                 bench_obj: Box::new(load_obj),
             },
             Cmd {
                 args: run,
-                hash: hash_run,
+                idx: 1,
                 bench_obj: Box::new(run_obj),
             },
         ];

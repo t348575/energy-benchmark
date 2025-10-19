@@ -1,12 +1,14 @@
 use std::{
     cmp::min,
+    collections::HashMap,
     sync::Arc,
     time::{Duration, Instant},
 };
 
 use common::{
+    config::Settings,
     sensor::{Sensor, SensorArgs, SensorReply, SensorRequest},
-    util::{SensorError, sensor_reader},
+    util::{SensorError, TimeSeriesAxis, sensor_reader},
 };
 use eyre::{Context, ContextCompat, Result};
 use flume::{Receiver, Sender};
@@ -32,6 +34,8 @@ impl SensorArgs for SysinfoConfig {
     }
 }
 
+const SYSINFO_FILENAME: &str = "sysinfo.csv";
+
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Sysinfo;
 
@@ -40,9 +44,14 @@ impl Sensor for Sysinfo {
         "Sysinfo"
     }
 
+    fn filename(&self) -> &'static str {
+        SYSINFO_FILENAME
+    }
+
     fn start(
         &self,
         args: &dyn SensorArgs,
+        _: &Settings,
         rx: Receiver<SensorRequest>,
         tx: Sender<SensorReply>,
     ) -> Result<JoinHandle<Result<()>>> {
@@ -55,7 +64,7 @@ impl Sensor for Sysinfo {
             if let Err(err) = sensor_reader(
                 rx,
                 tx,
-                "sysinfo",
+                SYSINFO_FILENAME,
                 args,
                 init_sysinfo,
                 |args: &SysinfoConfig,
@@ -160,4 +169,32 @@ async fn read_sysinfo(
         .collect::<Vec<_>>();
     readings.extend_from_slice(&[mem as f64, fio_cpu as f64, fio_mem as f64]);
     Ok(readings)
+}
+
+pub fn sysinfo_freq_plot_axis(cpu_topology: &HashMap<u32, u32>) -> Vec<TimeSeriesAxis> {
+    cpu_topology
+        .iter()
+        .map(|x| {
+            TimeSeriesAxis::sensor(
+                SYSINFO_FILENAME,
+                &format!("average_freq_node{}", x.0),
+                format!("CPU {} Freq.", x.0),
+                "CPU Freq. (MHz)",
+            )
+        })
+        .collect()
+}
+
+pub fn sysinfo_load_plot_axis(cpu_topology: &HashMap<u32, u32>) -> Vec<TimeSeriesAxis> {
+    cpu_topology
+        .iter()
+        .map(|x| {
+            TimeSeriesAxis::sensor(
+                SYSINFO_FILENAME,
+                &format!("average_load_node{}", x.0),
+                format!("CPU {} Load.", x.0),
+                "CPU Load.",
+            )
+        })
+        .collect()
 }

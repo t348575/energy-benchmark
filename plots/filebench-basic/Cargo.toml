@@ -16,3 +16,5 @@ tracing.workspace = true
 itertools.workspace = true
 rayon.workspace = true
 futures.workspace = true
+plot-common.workspace = true
+default-benches.workspace = true

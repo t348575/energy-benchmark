@@ -49,12 +49,11 @@ impl Bench for Cmd {
         _name: &str,
     ) -> Result<CmdsResult> {
         let args = self.args.clone().unwrap_or_default();
-        let hash = format!("{:x}", md5::compute(args.join(" ")));
         Ok(CmdsResult {
             program: self.program.clone(),
             cmds: vec![common::bench::Cmd {
                 args: args.clone(),
-                hash,
+                idx: 0,
                 bench_obj: Box::new(Cmd {
                     program: self.program.clone(),
                     args: Some(args),

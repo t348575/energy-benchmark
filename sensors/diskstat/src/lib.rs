@@ -1,14 +1,15 @@
 use std::{
     cmp::min,
-    sync::Arc,
+    sync::{Arc, LazyLock},
     time::{Duration, Instant},
 };
 
 use common::{
+    config::Settings,
     sensor::{Sensor, SensorArgs, SensorReply, SensorRequest},
-    util::{SensorError, sensor_reader},
+    util::{SensorError, TimeSeriesAxis, sensor_reader},
 };
-use eyre::{Context, ContextCompat, Result};
+use eyre::{Context, Result};
 use flume::{Receiver, Sender};
 use serde::{Deserialize, Serialize};
 use tokio::{
@@ -21,12 +22,22 @@ use tokio::{
 use tracing::error;
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
-pub struct DiskStatConfig {
+pub struct DiskStatConfig;
+
+#[typetag::serde]
+impl SensorArgs for DiskStatConfig {
+    fn name(&self) -> &'static str {
+        "DiskStat"
+    }
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+struct InternalDiskStatConfig {
     device: String,
 }
 
 #[typetag::serde]
-impl SensorArgs for DiskStatConfig {
+impl SensorArgs for InternalDiskStatConfig {
     fn name(&self) -> &'static str {
         "DiskStat"
     }
@@ -52,28 +63,31 @@ struct DiskStatData {
     write_ticks: u64,
 }
 
+const DISKSTAT_FILENAME: &str = "diskstat.csv";
+
 impl Sensor for Diskstat {
     fn name(&self) -> &'static str {
         "DiskStat"
     }
 
+    fn filename(&self) -> &'static str {
+        DISKSTAT_FILENAME
+    }
+
     fn start(
         &self,
-        args: &dyn SensorArgs,
+        _: &dyn SensorArgs,
+        settings: &Settings,
         rx: Receiver<SensorRequest>,
         tx: Sender<SensorReply>,
     ) -> Result<JoinHandle<Result<()>>> {
-        let args = args
-            .downcast_ref::<DiskStatConfig>()
-            .context("Invalid sensor args, expected args for Sysinfo")?;
-
-        let args = args.clone();
+        let device = settings.device.strip_prefix("/dev/").unwrap().to_string();
         let handle = spawn(async move {
             if let Err(err) = sensor_reader(
                 rx,
                 tx,
-                "diskstat",
-                args,
+                DISKSTAT_FILENAME,
+                InternalDiskStatConfig { device },
                 init_diskstat,
                 |_,
                  sensor: &Arc<Mutex<InternalDiskStat>>,
@@ -95,7 +109,7 @@ impl Sensor for Diskstat {
 }
 
 async fn init_diskstat(
-    config: DiskStatConfig,
+    config: InternalDiskStatConfig,
 ) -> Result<(Arc<Mutex<InternalDiskStat>>, Vec<String>)> {
     let hw_sector_size =
         read_to_string(format!("/sys/block/{}/queue/hw_sector_size", config.device))
@@ -191,3 +205,21 @@ impl InternalDiskStat {
         Ok(readings)
     }
 }
+
+pub static DISKSTAT_PLOT_AXIS: LazyLock<[TimeSeriesAxis; 3]> = LazyLock::new(|| {
+    [
+        TimeSeriesAxis::sensor(DISKSTAT_FILENAME, "total", "diskstat", "Throughput (MiB/s)"),
+        TimeSeriesAxis::sensor(
+            DISKSTAT_FILENAME,
+            "read",
+            "diskstat read",
+            "Throughput (MiB/s)",
+        ),
+        TimeSeriesAxis::sensor(
+            DISKSTAT_FILENAME,
+            "write",
+            "diskstat write",
+            "Throughput (MiB/s)",
+        ),
+    ]
+});

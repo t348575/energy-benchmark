@@ -4,7 +4,8 @@ use common::{
     bench::{Bench, BenchArgs, Cmd, CmdsResult},
     config::{Config, Settings},
     util::{
-        get_pcie_address, parse_time, simple_command_with_output, simple_command_with_output_no_dir,
+        get_pcie_address, parse_time, read_json_file, simple_command_with_output,
+        simple_command_with_output_no_dir,
     },
 };
 use eyre::{ContextCompat, Result, bail};
@@ -94,6 +95,10 @@ impl Bench for Fio {
         Box::new(FioConfig::default())
     }
 
+    fn internal_cgroup(&self) -> bool {
+        true
+    }
+
     fn runtime_estimate(&self) -> Result<u64> {
         let runtime = parse_time(self.runtime.as_ref().unwrap_or(&"1s".to_owned()))?;
         let ramp = parse_time(self.ramp_time.as_ref().unwrap_or(&"1s".to_owned()))?;
@@ -140,7 +145,8 @@ impl Bench for Fio {
             extra_options: Some(vec![extra_options]),
             num_jobs: Some(vec![job]),
         })
-        .map(|bench| {
+        .enumerate()
+        .map(|(idx, bench)| {
             let device = if bench.io_engines[0].eq("spdk") {
                 let pcie_address = get_pcie_address(&settings.device)
                     .context("Get drive PCIe address")
@@ -208,10 +214,13 @@ impl Bench for Fio {
                 args.push(format!("--numa_mem_policy={}", numa.membind));
             }
 
-            let hash = format!("{:x}", md5::compute(args.join(" ")));
+            if settings.cgroup_io.is_some() {
+                args.push("--cgroup=energy-benchmark".to_owned());
+            }
+
             Cmd {
                 args,
-                hash,
+                idx,
                 bench_obj: Box::new(bench),
             }
         })
@@ -287,10 +296,17 @@ impl Bench for Fio {
     async fn post_experiment(
         &self,
         _data_dir: &Path,
-        _final_results_dir: &Path,
+        final_results_dir: &Path,
         _settings: &Settings,
         bench_args: &dyn BenchArgs,
     ) -> Result<()> {
+        let results: result::FioResult =
+            read_json_file(final_results_dir.join("results.json")).await?;
+        debug!(
+            "bw_mean: ({}, {})",
+            results.jobs[0].read.bw_mean, results.jobs[0].write.bw_mean
+        );
+
         if self.io_engines[0].ne("spdk") {
             return Ok(());
         }

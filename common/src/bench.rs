@@ -7,7 +7,7 @@ use eyre::{Context, ContextCompat, Result, bail};
 use flume::Sender;
 use serde::{Deserialize, Serialize};
 use tokio::{
-    fs::File,
+    fs::{File, create_dir_all, read_to_string, remove_dir},
     io::{AsyncReadExt, AsyncWriteExt},
     process::{Child, Command},
     spawn,
@@ -37,6 +37,10 @@ pub trait Bench: Debug + DynClone + Downcast + Send + Sync {
     where
         Self: Sized + 'static;
     fn default_bench_args(&self) -> Box<dyn BenchArgs>;
+    /// Indicates if the benchmark can add itself to a cgroup, or if the default runner should add it to the cgroup.
+    fn internal_cgroup(&self) -> bool {
+        false
+    }
     /// Return an estimate of how long the benchmark will take to run
     ///
     /// Returns:
@@ -136,7 +140,33 @@ pub trait Bench: Debug + DynClone + Downcast + Send + Sync {
             trace.replace(trace_nvme_calls(final_results_dir).await?);
         }
 
-        let child = Command::new(program)
+        let mut cmd = Command::new(program);
+        let cgroup_path = "/sys/fs/cgroup/energy-benchmark";
+        if let Some(cgroup_io) = &settings.cgroup_io {
+            _ = remove_dir(cgroup_path).await;
+            create_dir_all(cgroup_path).await?;
+            let device = settings
+                .device
+                .strip_prefix("/dev/")
+                .context("Device does not include /dev")?;
+            let device = read_to_string(format!("/sys/block/{device}/dev")).await?;
+            cgroup_io.apply(cgroup_path, device.trim()).await?;
+        }
+
+        if settings.cgroup_io.is_some() && !self.internal_cgroup() {
+            unsafe {
+                cmd.pre_exec(move || {
+                    use std::io::Write;
+                    let mut f = std::fs::OpenOptions::new()
+                        .write(true)
+                        .open(format!("{cgroup_path}/cgroup.procs"))?;
+                    write!(f, "{}", nix::unistd::getpid().as_raw())?;
+                    Ok(())
+                });
+            }
+        }
+
+        let child = cmd
             .args(args)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -173,6 +203,8 @@ pub trait Bench: Debug + DynClone + Downcast + Send + Sync {
             sensor.send_async(SensorRequest::StopRecording).await?;
         }
         debug!("Sensors stopped");
+
+        _ = remove_dir(cgroup_path).await;
 
         if let Some(mut trace) = trace {
             trace.0.kill().await?;
@@ -212,19 +244,27 @@ impl_downcast!(BenchArgs);
 pub struct Cmd {
     /// Arguments
     pub args: Vec<String>,
-    /// Hash of arguments to use for the experiment folder name
-    pub hash: String,
+    /// Index of the experiment
+    pub idx: usize,
     /// An argument object, with only the arguments for this experiment
     pub bench_obj: Box<dyn Bench>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BenchmarkInfo {
+pub struct BenchInfo {
+    pub param_map: HashMap<String, BenchParams>,
+    pub device_power_states: Vec<(f64, String)>,
+    pub cpu_freq_limits: (f64, f64),     // (min, max)
+    pub cpu_topology: HashMap<u32, u32>, // (numa domain, cores)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BenchParams {
     pub power_state: i32,
     pub iteration: usize,
     /// Name of the experiment, ie. [`crate::config::Config::bench_args::name`]
     pub name: String,
-    pub hash: String,
+    pub idx: usize,
     pub args: Box<dyn Bench>,
 }
 

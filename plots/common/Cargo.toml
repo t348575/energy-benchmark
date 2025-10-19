@@ -1,22 +1,10 @@
 [package]
-name = "fio-basic"
+name = "plot-common"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
 common.workspace = true
-serde.workspace = true
-typetag.workspace = true
-eyre.workspace = true
-async-trait.workspace = true
-tokio.workspace = true
-fio = { path = "../../benches/fio" }
-serde_json.workspace = true
-itertools.workspace = true
-tracing.workspace = true
-regex.workspace = true
-futures.workspace = true
-rayon.workspace = true
 default-sensors.workspace = true
 default-benches.workspace = true
 diskstat = { path = "../../sensors/diskstat" }

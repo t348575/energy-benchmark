@@ -7,6 +7,8 @@ use eyre::Result;
 use flume::{Receiver, Sender};
 use tokio::task::JoinHandle;
 
+use crate::config::Settings;
+
 #[derive(Debug)]
 pub enum SensorRequest {
     StartRecording {
@@ -28,6 +30,8 @@ pub enum SensorReply {
 pub trait Sensor: Debug + Send {
     /// Name of the sensor, for identification
     fn name(&self) -> &'static str;
+    /// Sensor data filename
+    fn filename(&self) -> &'static str;
     /// Should start an async task that collects sensor data using [`tokio::task::spawn`]
     ///
     /// Arguments:
@@ -37,6 +41,7 @@ pub trait Sensor: Debug + Send {
     fn start(
         &self,
         args: &dyn SensorArgs,
+        settings: &Settings,
         rx: Receiver<SensorRequest>,
         tx: Sender<SensorReply>,
     ) -> Result<JoinHandle<Result<()>>>;

@@ -16,13 +16,14 @@ mod ffi {
 
 use std::{
     cmp::min,
-    sync::Arc,
+    sync::{Arc, LazyLock},
     time::{Duration, Instant},
 };
 
 use common::{
+    config::Settings,
     sensor::{Sensor, SensorArgs, SensorReply, SensorRequest},
-    util::{SensorError, sensor_reader},
+    util::{SensorError, TimeSeriesAxis, sensor_reader},
 };
 use cxx::UniquePtr;
 use eyre::{Context, ContextCompat, Result};
@@ -79,7 +80,6 @@ impl SensorState {
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Powersensor3Config {
     pub device: String,
-    pub indexes: Vec<i32>,
 }
 
 #[typetag::serde]
@@ -89,6 +89,8 @@ impl SensorArgs for Powersensor3Config {
     }
 }
 
+const POWERSENSOR_FILENAME: &str = "powersensor3.csv";
+
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Powersensor3;
 
@@ -97,9 +99,14 @@ impl Sensor for Powersensor3 {
         "Powersensor3"
     }
 
+    fn filename(&self) -> &'static str {
+        POWERSENSOR_FILENAME
+    }
+
     fn start(
         &self,
         args: &dyn SensorArgs,
+        _: &Settings,
         rx: Receiver<SensorRequest>,
         tx: Sender<SensorReply>,
     ) -> Result<JoinHandle<Result<()>>> {
@@ -112,18 +119,16 @@ impl Sensor for Powersensor3 {
             if let Err(err) = sensor_reader(
                 rx,
                 tx,
-                "powersensor3",
+                POWERSENSOR_FILENAME,
                 args,
                 init_powersensor3,
-                |args: &Powersensor3Config,
+                |_: &Powersensor3Config,
                  sensor: &Arc<Mutex<InternalPowersensor3>>,
                  _,
                  last_time|
                  -> std::pin::Pin<
                     Box<dyn Future<Output = Result<Vec<f64>, SensorError>> + Send>,
-                > {
-                    Box::pin(read_powersensor3(args.clone(), sensor.clone(), last_time))
-                },
+                > { Box::pin(read_powersensor3(sensor.clone(), last_time)) },
             )
             .await
             {
@@ -140,20 +145,14 @@ async fn init_powersensor3(
     args: Powersensor3Config,
 ) -> Result<(Arc<Mutex<InternalPowersensor3>>, Vec<String>)> {
     let sensor = InternalPowersensor3::new(&args.device)?;
-    let mut sensor_names = Vec::new();
-    for idx in &args.indexes {
-        if *idx == -1 {
-            sensor_names.push("Total".to_owned());
-        } else {
-            sensor_names.push(sensor.get_sensor_name(*idx)?);
-        }
-    }
+    let mut sensor_names = vec!["Total".to_owned()];
+    sensor_names.push(sensor.get_sensor_name(1)?);
+    sensor_names.push(sensor.get_sensor_name(2)?);
     debug!("Powersensor3 initialized");
     Ok((Arc::new(Mutex::new(sensor)), sensor_names))
 }
 
 async fn read_powersensor3(
-    args: Powersensor3Config,
     sensor: Arc<Mutex<InternalPowersensor3>>,
     last_time: Instant,
 ) -> Result<Vec<f64>, SensorError> {
@@ -174,10 +173,18 @@ async fn read_powersensor3(
         .context("Read sensor")
         .map_err(SensorError::MajorFailure)?;
 
-    let readings = args
-        .indexes
-        .iter()
-        .map(|sensor_idx| start.watts(&end, Some(*sensor_idx)))
-        .collect::<Vec<f64>>();
-    Ok(readings)
+    Ok(vec![
+        start.watts(&end, Some(-1)),
+        start.watts(&end, Some(1)),
+        start.watts(&end, Some(2)),
+    ])
 }
+
+pub static POWERSENSOR_PLOT_AXIS: LazyLock<[TimeSeriesAxis; 1]> = LazyLock::new(|| {
+    [TimeSeriesAxis::sensor(
+        POWERSENSOR_FILENAME,
+        "total_smoothed",
+        "SSD Power",
+        "SSD Power (Watts)",
+    )]
+});

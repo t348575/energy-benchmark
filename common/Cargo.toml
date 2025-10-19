@@ -16,3 +16,7 @@ dyn-clone = "1.0"
 thiserror.workspace = true
 csv.workspace = true
 regex.workspace = true
+futures.workspace = true
+serde_json.workspace = true
+rayon.workspace = true
+nix = { version = "0.30", features = ["process"] }
