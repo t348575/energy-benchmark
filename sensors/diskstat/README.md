@@ -18,5 +18,4 @@ The following is recorded in `diskstat.csv`:
 To use diskstat, add `DiskStat` to the `sensors` list in your configuration yaml, then add the config citing the disk to `sensor_args` (nvme2n1 shown as an example):
 ```
 - type: DiskStatConfig
-  device: nvme2n1
 ```

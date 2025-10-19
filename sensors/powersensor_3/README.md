@@ -17,5 +17,4 @@ To use Powersensor3, add `Powersensor3` to the `sensors` list in your configurat
 ```
 - type: Powersensor3Config
   device: /dev/ttyACM0
-  indexes: [-1, 1, 2]
 ```

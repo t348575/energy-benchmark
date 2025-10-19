@@ -60,7 +60,7 @@ pub enum CgroupIoCostQos {
     Auto,
     User {
         pct: RwIos,
-        lat: RwIos,
+        latency: RwIos,
         scaling: MinMax,
     },
 }
@@ -176,7 +176,7 @@ impl CgroupIo {
                     CgroupIoCostQos::Auto => {
                         write_one_line(base.join("io.cost.qos"), "auto").await?
                     }
-                    CgroupIoCostQos::User { pct, lat, scaling } => {
+                    CgroupIoCostQos::User { pct, latency: lat, scaling } => {
                         cmd.write_str(&pct.fmt(("rpct", "wpct")))?;
                         cmd.write_str(&lat.fmt(("rlat", "wlat")))?;
                         cmd.write_str(&scaling.fmt())?;
