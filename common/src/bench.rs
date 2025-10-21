@@ -54,8 +54,7 @@ pub trait Bench: Debug + DynClone + Downcast + Send + Sync {
     /// * `name` - Name of the experiment run
     ///
     /// Returns:
-    /// * 0: Program to run
-    /// * 1: [`Vec<Cmd>`] generated commands for each configuration arrangment
+    /// * [`CmdsResult`] containing the commands to run with arguments
     fn cmds(
         &self,
         settings: &Settings,
@@ -103,12 +102,16 @@ pub trait Bench: Debug + DynClone + Downcast + Send + Sync {
     /// * `settings` - Settings from config file
     /// * `bench_args` - Arguments for the experiment
     /// * `_last_experiment` - The last experiment that was run
+    /// * `config` - Config object
+    /// * `final_results_dir` - Directory to store results in
     async fn experiment_init(
         &self,
         _data_dir: &Path,
         _settings: &Settings,
         _bench_args: &dyn BenchArgs,
         _last_experiment: &Option<Box<dyn Bench>>,
+        _config: &Config,
+        _final_results_dir: &Path,
     ) -> Result<()> {
         Ok(())
     }
@@ -192,7 +195,7 @@ pub trait Bench: Debug + DynClone + Downcast + Send + Sync {
         debug!("Benchmark done");
         if !output.status.success() {
             bail!(
-                "Process exitied with {}, stdout: {}, stderr: {}",
+                "Process exited with {}, stdout: {}, stderr: {}",
                 output.status.code().unwrap_or_default(),
                 String::from_utf8(output.stdout).unwrap(),
                 String::from_utf8(output.stderr).unwrap()
@@ -254,7 +257,7 @@ pub struct Cmd {
 pub struct BenchInfo {
     pub param_map: HashMap<String, BenchParams>,
     pub device_power_states: Vec<(f64, String)>,
-    pub cpu_freq_limits: (f64, f64),     // (min, max)
+    pub cpu_freq_limits: (usize, usize), // (min, max)
     pub cpu_topology: HashMap<u32, u32>, // (numa domain, cores)
 }
 

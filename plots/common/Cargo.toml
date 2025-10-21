@@ -8,6 +8,6 @@ common.workspace = true
 default-sensors.workspace = true
 default-benches.workspace = true
 diskstat = { path = "../../sensors/diskstat" }
-powersensor_3 = { path = "../../sensors/powersensor_3" }
+powersensor3 = { path = "../../sensors/powersensor3" }
 rapl = { path = "../../sensors/rapl" }
 sysinfo = { path = "../../sensors/sysinfo" }

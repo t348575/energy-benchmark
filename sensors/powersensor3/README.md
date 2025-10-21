@@ -1,4 +1,4 @@
-# powersensor_3
+# powersensor3
 [PowerSensor3](https://github.com/nlesc-recruit/PowerSensor3) is a custom hardware tool to measure power consumption of PCIe devices.
 
 ## Prerequisites

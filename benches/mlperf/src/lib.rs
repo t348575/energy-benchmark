@@ -1,8 +1,9 @@
 use std::{collections::HashMap, path::Path};
 
 use common::{
+    RUN_NONROOT,
     bench::{Bench, BenchArgs, Cmd, CmdsResult},
-    config::Settings,
+    config::{Config, Settings},
     util::{Filesystem, chown_user, mount_fs, simple_command_with_output_no_dir},
 };
 use eyre::Result;
@@ -18,6 +19,7 @@ pub struct Mlperf {
     pub n_accelerators: Vec<u8>,
     pub accelerator_type: AccelType,
     pub params: HashMap<String, String>,
+    pub fs: Filesystem,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -130,7 +132,7 @@ impl Bench for Mlperf {
             .collect();
 
         Ok(CmdsResult {
-            program: "benches/mlperf/src/run.sh".to_owned(),
+            program: RUN_NONROOT.to_owned(),
             cmds,
         })
     }
@@ -156,6 +158,8 @@ impl Bench for Mlperf {
         settings: &Settings,
         _bench_args: &dyn BenchArgs,
         last_experiment: &Option<Box<dyn Bench>>,
+        _config: &Config,
+        _final_results_dir: &Path,
     ) -> Result<()> {
         let mlperf_mount = data_dir.join("mountpoint");
         let should_format = mlperf_mount.exists() && last_experiment.is_some();
@@ -163,7 +167,7 @@ impl Bench for Mlperf {
         mount_fs(
             &mlperf_mount,
             &settings.device,
-            Filesystem::Ext4,
+            &self.fs,
             !should_format,
             None::<String>,
         )
@@ -192,9 +196,9 @@ impl Bench for Mlperf {
             init_args.push(format!("{k}={v}"));
         }
 
-        debug!("run.sh {}", init_args.join(" "));
+        debug!("run-nonroot.sh {}", init_args.join(" "));
         _ = simple_command_with_output_no_dir(
-            "benches/mlperf/src/run.sh",
+            RUN_NONROOT,
             &init_args.iter().map(|x| x.as_str()).collect::<Vec<_>>(),
         )
         .await?;

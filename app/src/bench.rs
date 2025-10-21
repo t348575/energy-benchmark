@@ -233,6 +233,8 @@ pub async fn run_benchmark(config_file: String, no_progress: bool, skip_plot: bo
                             &config.settings,
                             &*bench_args,
                             &last_experiment,
+                            &config,
+                            &final_path,
                         )
                         .await?;
                     chown_user(&final_path).await?;
@@ -248,7 +250,16 @@ pub async fn run_benchmark(config_file: String, no_progress: bool, skip_plot: bo
                         .add_env(&*bench_args)
                         .context("Get benchmark env")?;
 
-                    debug!("iter={} program={} args={}", i, program, args.join(" "));
+                    debug!(
+                        "iter={} program={} args={} env=({})",
+                        i,
+                        program,
+                        args.join(" "),
+                        env.iter()
+                            .map(|x| format!("{}={}", x.0, x.1))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    );
                     let result = bench_obj
                         .run(
                             &program,
@@ -397,16 +408,7 @@ pub async fn run_benchmark(config_file: String, no_progress: bool, skip_plot: bo
     }
 
     if let Some(cpu_freq) = &config.settings.cpu_freq {
-        let min_cpu_freq =
-            read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_min_freq").await?;
-        let max_cpu_freq =
-            read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq").await?;
-        set_cpu_freq(
-            max_cpu_freq.trim().parse()?,
-            min_cpu_freq.trim().parse()?,
-            &cpu_freq.default_governor,
-        )
-        .await?;
+        set_cpu_freq(cpu_max_freq, cpu_min_freq, &cpu_freq.default_governor).await?;
     }
 
     debug!("Exiting");

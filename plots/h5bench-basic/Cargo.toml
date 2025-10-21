@@ -1,5 +1,5 @@
 [package]
-name = "fio-basic"
+name = "h5bench-basic"
 version = "0.1.0"
 edition = "2024"
 
@@ -10,16 +10,11 @@ typetag.workspace = true
 eyre.workspace = true
 async-trait.workspace = true
 tokio.workspace = true
-fio = { path = "../../benches/fio" }
+h5bench = { path = "../../benches/h5bench" }
 serde_json.workspace = true
-itertools.workspace = true
 tracing.workspace = true
-regex.workspace = true
 futures.workspace = true
 rayon.workspace = true
-default-sensors.workspace = true
+plot-common.workspace = true
 default-benches.workspace = true
-diskstat = { path = "../../sensors/diskstat" }
-powersensor3 = { path = "../../sensors/powersensor3" }
-rapl = { path = "../../sensors/rapl" }
-sysinfo = { path = "../../sensors/sysinfo" }
+csv.workspace = true

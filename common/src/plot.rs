@@ -91,7 +91,7 @@ pub fn collect_run_groups(
 }
 
 pub async fn ensure_plot_dirs(dirs: &[PathBuf]) -> Result<()> {
-    let create_jobs = dirs.iter().map(|dir| create_dir_all(dir));
+    let create_jobs = dirs.iter().map(create_dir_all);
     for res in join_all(create_jobs).await {
         res?;
     }
@@ -127,12 +127,12 @@ pub fn render_heatmaps(
     let labels_joined = labels.join(",");
 
     let jobs: Result<Vec<Vec<(String, String)>>> = jobs
-        .into_iter()
+        .iter()
         .map(|job| -> Result<Vec<(String, String)>> {
-            if let Some(parent) = job.filepath.parent() {
-                if !parent.exists() {
-                    fs::create_dir_all(parent)?;
-                }
+            if let Some(parent) = job.filepath.parent()
+                && !parent.exists()
+            {
+                fs::create_dir_all(parent)?;
             }
 
             let stem = job

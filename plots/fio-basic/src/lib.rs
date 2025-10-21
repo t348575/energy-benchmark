@@ -162,7 +162,7 @@ impl Plot for FioBasic {
                     .unwrap()
                     .job_runtime as usize;
                 let ramp_time = match &fio_result.jobs[0].job_options.ramp_time {
-                    Some(x) => parse_time(&x).context("Parse ramp time").unwrap(),
+                    Some(x) => parse_time(x).context("Parse ramp time").unwrap(),
                     None => 0,
                 };
 
@@ -193,8 +193,8 @@ impl Plot for FioBasic {
                     &["cpu-[0-9]{0,3}-freq", "cpu-[0-9]{0,3}-load"],
                     &[
                         (
-                            bench_info.cpu_freq_limits.0 / 1000.0,
-                            bench_info.cpu_freq_limits.1 / 1000.0,
+                            bench_info.cpu_freq_limits.0 as f64 / 1000.0,
+                            bench_info.cpu_freq_limits.1 as f64 / 1000.0,
                         ),
                         (0.0, f64::MAX),
                     ],
@@ -768,7 +768,7 @@ impl FioBwOverTime {
                     .clone()
                     .with_title("Throughput vs SSD power")
                     .with_filename(format!("{name}-ssd"))
-                    .with_secondary(powersensor_3::POWERSENSOR_PLOT_AXIS.to_vec()),
+                    .with_secondary(powersensor3::POWERSENSOR_PLOT_AXIS.to_vec()),
                 default
                     .clone()
                     .with_title("Throughput vs CPU power")

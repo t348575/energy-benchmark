@@ -19,7 +19,7 @@ pub fn include_benches(_: TokenStream) -> TokenStream {
 
     for p in config.benches {
         let d_name_caps = format_ident!("{}", p.to_case(Case::Pascal));
-        let d_name = format_ident!("{}", p.to_case(Case::Snake));
+        let d_name = format_ident!("{}", p.replace("-", "_"));
 
         benches.push(d_name);
         benches_caps.push(d_name_caps);
@@ -57,13 +57,16 @@ pub fn include_sensors(_: TokenStream) -> TokenStream {
         toml::from_str(&std::fs::read_to_string("setup.toml").unwrap()).unwrap();
     let mut sensors = Vec::new();
     let mut sensors_caps = Vec::new();
+    let mut sensor_config = Vec::new();
 
     for p in config.sensors {
         let p_name_caps = format_ident!("{}", p.to_case(Case::Pascal));
-        let p_name = format_ident!("{}", p.to_case(Case::Snake));
+        let p_name_config = format_ident!("{}Config", p.to_case(Case::Pascal));
+        let p_name = format_ident!("{}", p.replace("-", "_"));
 
         sensors.push(p_name);
         sensors_caps.push(p_name_caps);
+        sensor_config.push(p_name_config);
     }
 
     quote! {
@@ -78,6 +81,9 @@ pub fn include_sensors(_: TokenStream) -> TokenStream {
             // hack to prevent serde issues
             #(
                 serde_json::to_string(&#sensors::#sensors_caps::default()).unwrap();
+            )*
+            #(
+                serde_json::to_string(&#sensors::#sensor_config::default()).unwrap();
             )*
         }
 
@@ -104,7 +110,7 @@ pub fn include_plots(_: TokenStream) -> TokenStream {
 
     for p in config.plots {
         let p_name_caps = format_ident!("{}", p.to_case(Case::Pascal));
-        let p_name = format_ident!("{}", p.to_case(Case::Snake));
+        let p_name = format_ident!("{}", p.replace("-", "_"));
 
         plots.push(p_name);
         plots_caps.push(p_name_caps);
@@ -128,10 +134,10 @@ pub fn plugin_names_str(_: TokenStream) -> TokenStream {
     let mut names = config
         .benches
         .iter()
-        .map(|x| x.to_case(Case::Snake))
+        .map(|x| x.replace("-", "_"))
         .collect::<Vec<_>>();
-    names.extend(config.sensors.iter().map(|x| x.to_case(Case::Snake)));
-    names.extend(config.plots.iter().map(|x| x.to_case(Case::Snake)));
+    names.extend(config.sensors.iter().map(|x| x.replace("-", "_")));
+    names.extend(config.plots.iter().map(|x| x.replace("-", "_")));
 
     quote! {
         &[#(#names),*]

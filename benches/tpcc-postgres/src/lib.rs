@@ -6,7 +6,7 @@ use std::{
 
 use common::{
     bench::{Bench, BenchArgs, Cmd, CmdsResult},
-    config::Settings,
+    config::{Config, Settings},
     util::{Filesystem, mount_fs, simple_command_with_output, simple_command_with_output_no_dir},
 };
 use eyre::{ContextCompat, Result, bail};
@@ -113,6 +113,8 @@ impl Bench for TpccPostgres {
         settings: &Settings,
         bench_args: &dyn BenchArgs,
         last_experiment: &Option<Box<dyn Bench>>,
+        _config: &Config,
+        _final_results_dir: &Path,
     ) -> Result<()> {
         let common_dir = data_dir.join("common_dir");
         let postgres_mount = common_dir.join("mountpoint");
@@ -135,7 +137,7 @@ impl Bench for TpccPostgres {
         mount_fs(
             &postgres_mount,
             &settings.device,
-            self.filesystem.clone(),
+            &self.filesystem,
             should_load,
             self.fs_mount_opts.clone(),
         )
@@ -297,21 +299,21 @@ async fn find_last_created_dir(root_dir: &Path) -> Result<Option<PathBuf>> {
     let mut latest: Option<(PathBuf, SystemTime)> = None;
 
     while let Some(entry) = entries.next_entry().await? {
-        if is_dir(&entry).await? {
-            if let Ok(metadata) = entry.metadata().await {
-                let created = metadata
-                    .created()
-                    .unwrap_or_else(|_| metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH));
+        if is_dir(&entry).await?
+            && let Ok(metadata) = entry.metadata().await
+        {
+            let created = metadata
+                .created()
+                .unwrap_or_else(|_| metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH));
 
-                match &latest {
-                    Some((_, last_time)) if created > *last_time => {
-                        latest = Some((entry.path(), created));
-                    }
-                    None => {
-                        latest = Some((entry.path(), created));
-                    }
-                    _ => {}
+            match &latest {
+                Some((_, last_time)) if created > *last_time => {
+                    latest = Some((entry.path(), created));
                 }
+                None => {
+                    latest = Some((entry.path(), created));
+                }
+                _ => {}
             }
         }
     }

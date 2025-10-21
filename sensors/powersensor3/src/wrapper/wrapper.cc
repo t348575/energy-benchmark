@@ -1,4 +1,4 @@
-#include "powersensor_3/src/wrapper/wrapper.hpp"
+#include "powersensor3/src/wrapper/wrapper.hpp"
 #include "PowerSensor.hpp"
 #include <stdexcept>
 

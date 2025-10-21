@@ -1,42 +1,50 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     path::{Path, PathBuf},
 };
 
 use common::{
+    MB_TO_MIB,
     bench::{BenchInfo, BenchParams},
     config::{Config, Settings},
     plot::{HeatmapJob, Plot, PlotType, collect_run_groups, ensure_plot_dirs, render_heatmaps},
     util::{
         BarChartKind, SectionStats, calculate_sectioned, make_power_state_bar_config,
-        plot_bar_chart, power_energy_calculator, read_json_file,
+        plot_bar_chart, power_energy_calculator,
     },
 };
+use csv::{ReaderBuilder, Trim};
 use eyre::{Context, Result, bail};
 use futures::future::join_all;
-use itertools::Itertools;
+use h5bench::H5Bench;
 use plot_common::{default_timeseries_plot, impl_power_time_plot};
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
 use tokio::fs::read_to_string;
-use tpcc_postgres::{TpccPostgres, result::TpccPostgresMetrics};
 use tracing::debug;
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
-pub struct TpccBasic;
+pub struct H5BenchBasic;
+
+#[derive(Debug, Clone, Deserialize)]
+struct H5BenchResultRecord {
+    metric: String,
+    value: String,
+    #[serde(default)]
+    unit: Option<String>,
+}
 
 #[derive(Debug, Clone)]
 struct PlotEntry {
-    result: TpccPostgresMetrics,
+    result: HashMap<String, H5BenchResultRecord>,
     info: BenchParams,
-    args: TpccPostgres,
     ssd_power: SectionStats,
     cpu_power: SectionStats,
 }
 
 #[async_trait::async_trait]
 #[typetag::serde]
-impl Plot for TpccBasic {
+impl Plot for H5BenchBasic {
     fn required_sensors(&self) -> &'static [&'static str] {
         &["Powersensor3", "Rapl"]
     }
@@ -61,17 +69,16 @@ impl Plot for TpccBasic {
         if groups.is_empty() {
             return Ok(());
         }
+
         let entries = join_all(groups.iter().map(|group| {
-            let result_path = data_path.join(&group.dir).join("result.json");
-            let ps3_path = data_path.join(&group.dir).join("powersensor3.csv");
-            let rapl_path = data_path.join(&group.dir).join("rapl.csv");
+            let run_dir = data_path.join(&group.dir);
             let dir = group.dir.clone();
             let info = group.info.clone();
             async move {
                 (
-                    read_json_file::<TpccPostgresMetrics>(&result_path).await,
-                    read_to_string(ps3_path).await,
-                    read_to_string(rapl_path).await,
+                    read_to_string(run_dir.join("results.csv")).await,
+                    read_to_string(run_dir.join("powersensor3.csv")).await,
+                    read_to_string(run_dir.join("rapl.csv")).await,
                     dir,
                     info,
                 )
@@ -81,7 +88,8 @@ impl Plot for TpccBasic {
         let ready_entries = entries
             .into_par_iter()
             .map(|item| {
-                let (json, powersensor3, rapl, _dir, info) = item;
+                let (result, powersensor3, rapl, _dir, info) = item;
+                let result = result.context("Read results.csv").unwrap();
                 let rapl = rapl.context("Read rapl").unwrap();
                 let powersensor3 = powersensor3.context("Read powersensor3").unwrap();
 
@@ -106,9 +114,18 @@ impl Plot for TpccBasic {
                 .context("Calculate powersensor3 means")
                 .unwrap();
 
+                let mut rdr = ReaderBuilder::new()
+                    .has_headers(true)
+                    .trim(Trim::All)
+                    .from_reader(result.as_bytes());
+                let result = rdr
+                    .deserialize::<H5BenchResultRecord>()
+                    .map(|x| x.unwrap())
+                    .map(|x| (x.metric.clone(), x))
+                    .collect::<HashMap<_, _>>();
+
                 PlotEntry {
-                    result: json.context("Read results json").unwrap(),
-                    args: info.args.downcast_ref::<TpccPostgres>().unwrap().clone(),
+                    result,
                     info,
                     ssd_power: ps3_overall,
                     cpu_power: rapl_overall,
@@ -120,12 +137,12 @@ impl Plot for TpccBasic {
         let throughput_dir = plot_path.join("throughput");
         let efficiency_dir = plot_path.join("efficiency");
         let power_dir = plot_path.join("power");
-        let dir_list = vec![
+        ensure_plot_dirs(&[
             throughput_dir.clone(),
             efficiency_dir.clone(),
             power_dir.clone(),
-        ];
-        ensure_plot_dirs(&dir_list).await?;
+        ])
+        .await?;
 
         let plot_jobs: Vec<(
             Vec<PlotEntry>,
@@ -138,42 +155,46 @@ impl Plot for TpccBasic {
             (
                 ready_entries.clone(),
                 settings,
-                throughput_dir.join(format!("{experiment_name}-requests.pdf")),
+                throughput_dir.join(format!("{experiment_name}.pdf")),
                 "throughput",
-                "requests/s",
-                |data| data.result.summary.throughput as f64,
+                "MiB/s",
+                |data| {
+                    data.result
+                        .get("raw rate")
+                        .unwrap()
+                        .value
+                        .parse::<f64>()
+                        .unwrap()
+                        * MB_TO_MIB
+                        * if data
+                            .result
+                            .get("raw rate")
+                            .unwrap()
+                            .unit
+                            .as_ref()
+                            .unwrap()
+                            .starts_with("G")
+                        {
+                            1000.0
+                        } else {
+                            1.0
+                        }
+                },
             ),
             (
                 ready_entries.clone(),
                 settings,
-                throughput_dir.join(format!("{experiment_name}-tpmc.pdf")),
+                throughput_dir.join(format!("{experiment_name}-metadata.pdf")),
                 "throughput",
-                "tpmC",
-                |data| data.result.summary.tpmc as f64,
-            ),
-            (
-                ready_entries.clone(),
-                settings,
-                throughput_dir.join(format!("{experiment_name}-efficiency.pdf")),
-                "throughput",
-                "%",
-                |data| data.result.summary.efficiency,
-            ),
-            (
-                ready_entries.clone(),
-                settings,
-                power_dir.join(format!("{experiment_name}-cpu.pdf")),
-                "power",
-                "%",
-                |data| data.cpu_power.power.unwrap(),
-            ),
-            (
-                ready_entries.clone(),
-                settings,
-                power_dir.join(format!("{experiment_name}-ssd.pdf")),
-                "power",
-                "%",
-                |data| data.ssd_power.power.unwrap(),
+                "s",
+                |data| {
+                    data.result
+                        .get("metadata time")
+                        .unwrap()
+                        .value
+                        .parse::<f64>()
+                        .unwrap()
+                },
             ),
         ];
 
@@ -191,7 +212,7 @@ impl Plot for TpccBasic {
     }
 }
 
-impl TpccBasic {
+impl H5BenchBasic {
     fn bar_plot(
         &self,
         ready_entries: Vec<PlotEntry>,
@@ -204,7 +225,6 @@ impl TpccBasic {
     ) -> Result<()> {
         let num_power_states = settings.nvme_power_states.clone().unwrap_or(vec![0]).len();
         let mut results = vec![vec![]; num_power_states];
-        let (order, labels) = self.get_order_labels(ready_entries.clone());
 
         let experiment_name = ready_entries[0].info.name.clone();
 
@@ -218,28 +238,24 @@ impl TpccBasic {
             results[ps as usize].push((item, mean));
         }
 
-        for item in results.iter_mut() {
-            item.sort_by_key(|entry| {
-                order
-                    .get(&format!("{}", entry.0.args.num_clients[0]))
-                    .unwrap()
-            });
-        }
-
         let results = results
-            .iter()
+            .into_iter()
             .map(|x| x.iter().map(|x| x.1).collect::<Vec<_>>())
             .collect::<Vec<_>>();
 
         let chart_kind = match plotting_file {
             "throughput" => BarChartKind::Throughput,
             "power" => BarChartKind::Power,
-            other => {
-                bail!("Unsupported plotting file {other}");
-            }
+            other => bail!("Unsupported plotting file {other}"),
         };
         let config = make_power_state_bar_config(chart_kind, x_label, &experiment_name, None);
-        plot_bar_chart(&filepath, results, labels, config, bench_info)
+        plot_bar_chart(
+            &filepath,
+            results,
+            vec!["Throughput".to_string()],
+            config,
+            bench_info,
+        )
     }
 
     async fn efficiency(
@@ -249,74 +265,84 @@ impl TpccBasic {
         plot_path: &Path,
     ) -> Result<()> {
         let num_power_states = settings.nvme_power_states.clone().unwrap_or(vec![0]).len();
-        let (order, labels) = self.get_order_labels(ready_entries.clone());
-        let mut ops_j = vec![vec![0f64; num_power_states]; order.len()];
+        let mut bytes_j = vec![0f64; num_power_states].clone();
+        let mut bytes_j_ssd = bytes_j.clone();
         let experiment_name = ready_entries[0].info.name.clone();
 
         let results = ready_entries
             .par_iter()
             .map(|item| {
-                let ops = item.result.summary.tpmc as f64;
-                let x = *order
-                    .get(&format!("{}", item.args.num_clients[0],))
-                    .unwrap();
+                let multiplier = if item
+                    .result
+                    .get("raw rate")
+                    .unwrap()
+                    .unit
+                    .as_ref()
+                    .unwrap()
+                    .starts_with("G")
+                {
+                    1000.0
+                } else {
+                    1.0
+                };
+                let throughput = item
+                    .result
+                    .get("raw rate")
+                    .unwrap()
+                    .value
+                    .parse::<f64>()
+                    .unwrap()
+                    * MB_TO_MIB
+                    * multiplier;
                 let y = if item.info.power_state == -1 {
                     0
                 } else {
                     item.info.power_state
                 } as usize;
 
+                let ssd_power = item.ssd_power.power.unwrap();
+                let cpu_power = item.cpu_power.power.unwrap();
                 (
-                    x,
                     y,
-                    ops / ((item.ssd_power.power.unwrap() + item.cpu_power.power.unwrap()) * 60.0),
+                    throughput / (ssd_power + cpu_power),
+                    throughput / ssd_power,
                 )
             })
             .collect::<Vec<_>>();
         for item in results {
-            let x = item.0;
-            let y = item.1;
-            ops_j[x][y] = item.2;
+            let y = item.0;
+            bytes_j[y] = item.1;
+            bytes_j_ssd[y] = item.2;
         }
 
-        let jobs = vec![HeatmapJob {
-            filepath: plot_path.join(format!("{}-iops-j.pdf", &experiment_name)),
-            data: ops_j,
-            title: "TPMC/J",
-            x_label: "overall",
-            reverse: false,
-        }];
+        let jobs = vec![
+            HeatmapJob {
+                filepath: plot_path.join(format!("{}-bytes-j+cpu.pdf", &experiment_name)),
+                data: vec![bytes_j],
+                title: "MiB/J",
+                x_label: "overall",
+                reverse: false,
+            },
+            HeatmapJob {
+                filepath: plot_path.join(format!("{}-bytes-j.pdf", &experiment_name)),
+                data: vec![bytes_j_ssd],
+                title: "MiB/J",
+                x_label: "overall",
+                reverse: false,
+            },
+        ];
 
-        render_heatmaps(&experiment_name, &labels, plot_path, &jobs)
-    }
-
-    fn get_order_labels(
-        &self,
-        ready_entries: Vec<PlotEntry>,
-    ) -> (HashMap<String, usize>, Vec<String>) {
-        let vars = ready_entries
-            .iter()
-            .map(|x| (&x.args.num_clients[0],))
-            .collect::<HashSet<_>>();
-        let data = vars.into_iter().sorted_by(|a, b| a.0.cmp(b.0));
-        let order: HashMap<String, usize> = data
-            .clone()
-            .map(|x| format!("{}", x.0))
-            .enumerate()
-            .map(|(x, y)| (y, x))
-            .collect();
-        let labels: Vec<String> = data.map(|x| format!("{}", x.0)).collect();
-        (order, labels)
+        render_heatmaps(&experiment_name, &["overall".to_owned()], plot_path, &jobs)
     }
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
-pub struct TpccPowerTime {
+pub struct H5BenchPowerTime {
     pub offset: Option<usize>,
 }
 impl_power_time_plot!(
-    TpccPowerTime,
-    TpccPostgres,
-    |cfg: &TpccPostgres| cfg.num_clients[0],
-    |cfg: &TpccPostgres| cfg.filesystem.clone()
+    H5BenchPowerTime,
+    H5Bench,
+    |cfg: &H5Bench| cfg.rank,
+    |cfg: &H5Bench| cfg.base_fs.clone()
 );

@@ -1,5 +1,5 @@
 # energy-benchmark ![Visits](https://lambda.348575.xyz/repo-view-counter?repo=energy-benchmark)
-A tool to automate NVME SSD energy-performance benchmarks
+A tool to automate NVMe SSD energy-performance benchmarks, originally done for my [M.Sc. Thesis](https://atlarge-research.com/pdfs/kanichai2025thesis.pdf).
 
 ## Setup
 1. Clone the repository https://github.com/t348575/energy-benchmark
@@ -7,7 +7,7 @@ A tool to automate NVME SSD energy-performance benchmarks
 #### Example:
 ```toml
 benches = ["fio", "ycsb"]
-sensors = ["powersensor_3", "sysinfo"]
+sensors = ["powersensor3", "sysinfo"]
 plots = ["ycsb-basic"]
 
 [ycsb]
@@ -16,7 +16,7 @@ features = ["prefill"] # activate a cargo feature for this benchmark
 3. Ensure all dependencies required for the benchmark runners, sensors & plotters are installed (check respective directories for README)
 4. Run `cargo build` (populates dependencies from setup.toml)
 5. Run `cargo build --release -p energy-benchmark` (built executable in `target/release/`)
-6. Ensure `python3` is installed if you are generating any plots, preferibly create a virtual env as well.
+6. Ensure `python3` is installed if you are generating any plots, preferably create a virtual env as well.
 7. Setup a `config.yaml` benchmark configuration file as shown below, then run using: `sudo target/release/energy-benchmark bench`
 
 **Note 1**: Always run the benchmark using sudo, and from the repository root.
@@ -57,6 +57,9 @@ settings:
       #   latency:
       #     r: 10
       #     w: 30
+      #   scaling:
+      #     min: 10
+      #     max: 85
       model: Auto                               # io.cost.model. Optional, specify Auto or User.
       # model: !User
       #   bps:

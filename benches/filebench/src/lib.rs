@@ -162,7 +162,7 @@ impl Bench for Filebench {
         mount_fs(
             &filebench_mount,
             &settings.device,
-            self.fs[0].clone(),
+            &self.fs[0],
             should_format,
             None::<String>,
         )

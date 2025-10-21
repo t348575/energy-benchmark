@@ -21,7 +21,10 @@ use rayon::{
 use regex::Regex;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use tokio::{
-    fs::{File, OpenOptions, create_dir_all, read_to_string as tokio_read_to_string},
+    fs::{
+        File, OpenOptions, create_dir_all, read_dir, read_to_string as tokio_read_to_string,
+        remove_dir_all, remove_file,
+    },
     io::{self, AsyncReadExt, AsyncWriteExt},
     process::Command,
     spawn,
@@ -544,7 +547,7 @@ impl TimeSeriesPlot {
             secondary_y_axis: Vec::new(),
             title: title.into(),
             file_name: file_name.into(),
-            dir: dir.into(),
+            dir,
         }
     }
 
@@ -609,7 +612,7 @@ impl TimeSeriesSpec {
         Self {
             bench_type: bench_type.into(),
             plot_dir: plot_dir.into(),
-            results_dir: results_dir,
+            results_dir,
             config_yaml: base_dir.join("config.yaml"),
             info_json: base_dir.join("info.json"),
             name,
@@ -723,7 +726,7 @@ pub async fn simple_command_with_output(
         });
     }
 
-    if output.stderr.len() > 0 {
+    if !output.stderr.is_empty() {
         info!("stderr: {}", String::from_utf8(output.stderr).unwrap());
     }
     String::from_utf8(output.stdout).map_err(CommandError::StringParseError)
@@ -839,14 +842,10 @@ pub fn calculate_sectioned<CalculatedData: Debug + Default + Copy, const N: usiz
         .iter()
         .enumerate()
         .filter_map(|(idx, col)| {
-            if let Some(col_filter_idx) = columns
+            columns
                 .iter()
                 .position(|c| Regex::new(c).unwrap().is_match_at(col, 0))
-            {
-                Some((col_filter_idx, idx))
-            } else {
-                None
-            }
+                .map(|col_filter_idx| (col_filter_idx, idx))
         })
         .collect::<Vec<_>>();
 
@@ -873,9 +872,10 @@ pub fn calculate_sectioned<CalculatedData: Debug + Default + Copy, const N: usiz
             .filter_map(|col_idx| {
                 let val = rec.get(col_idx.1)?;
                 let val = val.parse::<f64>().ok()?;
-                if val.is_nan() || !val.is_finite() {
-                    None
-                } else if val < limits[col_idx.0].0 || val > limits[col_idx.0].1 {
+                if val.is_nan()
+                    || !val.is_finite()
+                    || (val < limits[col_idx.0].0 && val > limits[col_idx.0].1)
+                {
                     None
                 } else {
                     Some(val)
@@ -1076,7 +1076,7 @@ pub fn sysinfo_average_calculator(data: &[(usize, Vec<f64>)]) -> (f64, f64) {
 pub async fn mount_fs(
     mountpoint: &Path,
     device: &str,
-    fs: Filesystem,
+    fs: &Filesystem,
     should_format: bool,
     mount_opts: Option<impl Into<String>>,
 ) -> Result<()> {
@@ -1152,12 +1152,11 @@ pub fn get_pcie_address(dev: &str) -> Option<String> {
 
     let re = Regex::new(r"^[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-9]$").unwrap();
     for component in abs_path.ancestors() {
-        if let Some(file_name) = component.file_name() {
-            if let Some(s) = file_name.to_str() {
-                if re.is_match(s) {
-                    return Some(s.to_string());
-                }
-            }
+        if let Some(file_name) = component.file_name()
+            && let Some(s) = file_name.to_str()
+            && re.is_match(s)
+        {
+            return Some(s.to_string());
         }
     }
     None
@@ -1178,9 +1177,10 @@ fn old_csv_format<CalculatedData: Debug + Default + Copy, const N: usize>(
             .filter_map(|col_idx| {
                 let val = rec.get(col_idx.1)?;
                 let val = val.parse::<f64>().ok()?;
-                if val.is_nan() || !val.is_finite() {
-                    None
-                } else if val < limits[col_idx.0].0 || val > limits[col_idx.0].1 {
+                if val.is_nan()
+                    || !val.is_finite()
+                    || (val < limits[col_idx.0].0 && val > limits[col_idx.0].1)
+                {
                     None
                 } else {
                     Some(val)
@@ -1230,7 +1230,26 @@ pub async fn get_cpu_topology() -> Result<HashMap<u32, u32>> {
 
 pub async fn write_one_line<P: AsRef<Path>>(path: P, s: &str) -> io::Result<()> {
     let mut f = OpenOptions::new().write(true).open(&path).await?;
-    f.write(format!("{s}\n").as_bytes()).await?;
-    debug!("Writing to {}, {}", path.as_ref().display(), s);
+    _ = f.write(format!("{s}\n").as_bytes()).await?;
+    Ok(())
+}
+
+pub async fn clean_directory_except_prefill<P: AsRef<Path>>(dir: P) -> io::Result<()> {
+    let mut entries = read_dir(dir).await?;
+    while let Some(entry) = entries.next_entry().await? {
+        let path = entry.path();
+
+        if path.file_name().is_some_and(|name| name == "prefill.data") {
+            continue;
+        }
+
+        let metadata = entry.metadata().await?;
+        if metadata.is_dir() {
+            remove_dir_all(&path).await?;
+        } else {
+            remove_file(&path).await?;
+        }
+    }
+
     Ok(())
 }

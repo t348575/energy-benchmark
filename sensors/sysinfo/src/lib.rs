@@ -177,7 +177,7 @@ pub fn sysinfo_freq_plot_axis(cpu_topology: &HashMap<u32, u32>) -> Vec<TimeSerie
         .map(|x| {
             TimeSeriesAxis::sensor(
                 SYSINFO_FILENAME,
-                &format!("average_freq_node{}", x.0),
+                format!("average_freq_node{}", x.0),
                 format!("CPU {} Freq.", x.0),
                 "CPU Freq. (MHz)",
             )
@@ -191,7 +191,7 @@ pub fn sysinfo_load_plot_axis(cpu_topology: &HashMap<u32, u32>) -> Vec<TimeSerie
         .map(|x| {
             TimeSeriesAxis::sensor(
                 SYSINFO_FILENAME,
-                &format!("average_load_node{}", x.0),
+                format!("average_load_node{}", x.0),
                 format!("CPU {} Load.", x.0),
                 "CPU Load.",
             )

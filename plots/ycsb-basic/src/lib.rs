@@ -8,14 +8,14 @@ use common::{
     config::{Config, Settings},
     plot::{HeatmapJob, Plot, PlotType, collect_run_groups, ensure_plot_dirs, render_heatmaps},
     util::{
-        BarChartKind, SectionStats, calculate_sectioned, make_power_state_bar_config, parse_trace,
-        plot_bar_chart, plot_time_series, power_energy_calculator, read_json_file, write_csv,
+        BarChartKind, SectionStats, calculate_sectioned, make_power_state_bar_config,
+        plot_bar_chart, power_energy_calculator, read_json_file,
     },
 };
 use eyre::{Context, Result, bail};
 use futures::future::join_all;
 use itertools::Itertools;
-use plot_common::default_timeseries_plot;
+use plot_common::{default_timeseries_plot, impl_power_time_plot};
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
 use tokio::fs::read_to_string;
@@ -32,6 +32,13 @@ struct PlotEntry {
     args: Ycsb,
     ssd_power: SectionedCalculation,
     cpu_power: SectionedCalculation,
+}
+
+#[derive(Debug, Clone)]
+pub struct SectionedCalculation {
+    pub overall: SectionStats,
+    pub benchmark: SectionStats,
+    pub unmount: SectionStats,
 }
 
 #[async_trait::async_trait]
@@ -383,93 +390,9 @@ pub struct YcsbPowerTime {
     pub offset: Option<usize>,
 }
 
-#[async_trait::async_trait]
-#[typetag::serde]
-impl Plot for YcsbPowerTime {
-    fn required_sensors(&self) -> &'static [&'static str] {
-        &["Powersensor3", "Rapl", "Sysinfo"]
-    }
-
-    async fn plot(
-        &self,
-        plot_type: &PlotType,
-        data_path: &Path,
-        plot_path: &Path,
-        _config_yaml: &Config,
-        bench_info: &BenchInfo,
-        dirs: Vec<String>,
-        _: &Settings,
-        completed_dirs: &mut Vec<String>,
-    ) -> Result<()> {
-        if *plot_type == PlotType::Total {
-            return Ok(());
-        }
-
-        let groups = collect_run_groups(dirs, &bench_info.param_map, completed_dirs)?;
-        if groups.is_empty() {
-            return Ok(());
-        }
-
-        let dir = plot_path.join("ycsb_time");
-        let inner_dir = dir.join(&groups[0].info.name);
-        let dir_list = vec![dir.clone(), inner_dir.clone(), inner_dir.join("plot_data")];
-        ensure_plot_dirs(&dir_list).await?;
-
-        for group in &groups {
-            self.ycsb_time(
-                data_path.join(&group.dir),
-                &inner_dir,
-                &group.info,
-                bench_info,
-            )?;
-        }
-        Ok(())
-    }
-}
-
-impl YcsbPowerTime {
-    fn ycsb_time(
-        &self,
-        data_path: PathBuf,
-        plot_path: &Path,
-        info: &BenchParams,
-        bench_info: &BenchInfo,
-    ) -> Result<()> {
-        let config = info.args.downcast_ref::<Ycsb>().unwrap();
-        let name = format!(
-            "{}-ps{}-{:?}-{:?}",
-            info.name,
-            info.power_state,
-            config._ycsb_op_type.as_ref().unwrap(),
-            config.fs
-        );
-
-        let trace_file = data_path.join("trace.out");
-        if trace_file.exists() {
-            let trace = parse_trace(&std::fs::File::open(&trace_file)?, &config.fs)?;
-            write_csv(
-                &plot_path.join("plot_data").join(format!("{name}.csv")),
-                &trace,
-            )?;
-        }
-
-        plot_time_series(
-            default_timeseries_plot(
-                default_benches::BenchKind::Ycsb,
-                plot_path.to_path_buf(),
-                data_path,
-                name,
-                bench_info,
-            )
-            .with_offset(self.offset),
-        )?;
-        Ok(())
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct SectionedCalculation {
-    pub overall: SectionStats,
-    pub benchmark: SectionStats,
-    pub unmount: SectionStats,
-}
+impl_power_time_plot!(
+    YcsbPowerTime,
+    Ycsb,
+    |cfg: &Ycsb| format!("{:?}-{:?}", cfg._ycsb_op_type.as_ref().unwrap(), cfg.fs),
+    |cfg: &Ycsb| cfg.fs.clone()
+);

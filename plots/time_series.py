@@ -52,7 +52,7 @@ def read_prepare_sensor_data(spec: "Spec", bench_config, bench_info):
         df = pd.read_csv(os.path.join(spec.results_dir, sensor), dtype="float32")
         df.dropna(inplace=True)
         if sensor == "powersensor3.csv" and spec.bench_type != "fio":
-            spec.trim_from_end = len(sensors[sensor]) - spec.trim_end
+            spec.trim_from_end = len(df) - spec.trim_end
         df = clean_sensor(sensor, spec, df)
         df = prepare_sensor(sensor, spec, bench_config, bench_info, df)
         sensors[sensor] = df
@@ -435,7 +435,6 @@ def gather_stats(sensors: Dict[str, pd.DataFrame], bench_data, bench_config, ben
 
         for set_name in dfs:
             df = dfs[set_name]
-            # set_stats = {}
 
             if set_name not in stats:
                 stats[set_name] = {}

@@ -10,7 +10,7 @@ use common::{
     plot::{HeatmapJob, Plot, PlotType, collect_run_groups, ensure_plot_dirs, render_heatmaps},
     util::{
         BarChartKind, SectionStats, calculate_sectioned, make_power_state_bar_config,
-        plot_bar_chart, plot_time_series, power_energy_calculator,
+        plot_bar_chart, power_energy_calculator,
     },
 };
 use eyre::{Context, ContextCompat, Result, bail};
@@ -20,7 +20,7 @@ use mlperf::{
     Mlperf,
     result::{MlperfMetrics, find_summary},
 };
-use plot_common::default_timeseries_plot;
+use plot_common::{default_timeseries_plot, impl_power_time_plot};
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
 use tokio::fs::read_to_string;
@@ -347,70 +347,9 @@ impl MlperfBasic {
 pub struct MlperfPowerTime {
     pub offset: Option<usize>,
 }
-
-#[async_trait::async_trait]
-#[typetag::serde]
-impl Plot for MlperfPowerTime {
-    fn required_sensors(&self) -> &'static [&'static str] {
-        &["Powersensor3", "Rapl", "Sysinfo"]
-    }
-
-    async fn plot(
-        &self,
-        plot_type: &PlotType,
-        data_path: &Path,
-        plot_path: &Path,
-        _config_yaml: &Config,
-        info: &BenchInfo,
-        dirs: Vec<String>,
-        _: &Settings,
-        completed_dirs: &mut Vec<String>,
-    ) -> Result<()> {
-        if *plot_type == PlotType::Total {
-            return Ok(());
-        }
-
-        let groups = collect_run_groups(dirs, &info.param_map, completed_dirs)?;
-        if groups.is_empty() {
-            return Ok(());
-        }
-
-        let dir = plot_path.join("mlperf_time");
-        let inner_dir = dir.join(&groups[0].info.name);
-        let dir_list = vec![dir.clone(), inner_dir.clone(), inner_dir.join("plot_data")];
-        ensure_plot_dirs(&dir_list).await?;
-
-        for group in &groups {
-            self.mlperf_time(data_path.join(&group.dir), &inner_dir, &group.info, info)?;
-        }
-        Ok(())
-    }
-}
-
-impl MlperfPowerTime {
-    fn mlperf_time(
-        &self,
-        data_path: PathBuf,
-        plot_path: &Path,
-        info: &BenchParams,
-        bench_info: &BenchInfo,
-    ) -> Result<()> {
-        let config = info.args.downcast_ref::<Mlperf>().unwrap();
-        let name = format!(
-            "{}-ps{}-{}",
-            info.name, info.power_state, config.n_accelerators[0]
-        );
-
-        plot_time_series(
-            default_timeseries_plot(
-                default_benches::BenchKind::Mlperf,
-                plot_path.to_path_buf(),
-                data_path,
-                name,
-                bench_info,
-            )
-            .with_offset(self.offset),
-        )?;
-        Ok(())
-    }
-}
+impl_power_time_plot!(
+    MlperfPowerTime,
+    Mlperf,
+    |cfg: &Mlperf| cfg.n_accelerators[0],
+    |cfg: &Mlperf| cfg.fs.clone()
+);

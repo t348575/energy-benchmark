@@ -115,9 +115,7 @@ impl Bench for Fio {
         let bench_args = bench_args
             .downcast_ref::<FioConfig>()
             .context("Invalid bench args, expected args for fio")?;
-        if self.io_engines.iter().find(|x| x.eq(&"spdk")).is_some()
-            && bench_args.spdk_path.is_none()
-        {
+        if self.io_engines.iter().any(|x| x.eq(&"spdk")) && bench_args.spdk_path.is_none() {
             bail!("Missing SPDK path");
         }
 
@@ -254,7 +252,7 @@ impl Bench for Fio {
                     .to_owned(),
             )]));
         }
-        return Ok(HashMap::new());
+        Ok(HashMap::new())
     }
 
     fn requires_custom_power_state_setter(&self) -> bool {
@@ -267,6 +265,8 @@ impl Bench for Fio {
         settings: &Settings,
         bench_args: &dyn BenchArgs,
         _last_experiment: &Option<Box<dyn Bench>>,
+        _config: &Config,
+        _final_results_dir: &Path,
     ) -> Result<()> {
         if self.io_engines[0].ne("spdk") {
             return Ok(());

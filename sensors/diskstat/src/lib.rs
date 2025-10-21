@@ -22,10 +22,10 @@ use tokio::{
 use tracing::error;
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
-pub struct DiskStatConfig;
+pub struct DiskstatConfig;
 
 #[typetag::serde]
-impl SensorArgs for DiskStatConfig {
+impl SensorArgs for DiskstatConfig {
     fn name(&self) -> &'static str {
         "DiskStat"
     }

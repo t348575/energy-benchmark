@@ -160,7 +160,7 @@ impl Bench for Ycsb {
         mount_fs(
             &ycsb_mount,
             &settings.device,
-            self.fs.clone(),
+            &self.fs,
             !self.is_same_experiment(last_experiment)?,
             self.fs_mount_opts.clone(),
         )
