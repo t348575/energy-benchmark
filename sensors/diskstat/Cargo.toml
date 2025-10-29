@@ -12,3 +12,4 @@ flume.workspace = true
 eyre.workspace = true
 tokio.workspace = true
 async-io.workspace = true
+sensor-common.workspace = true

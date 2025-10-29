@@ -2,6 +2,7 @@ use convert_case::{Case, Casing};
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use serde::Deserialize;
+use syn::{Expr, Token, parse_macro_input, punctuated::Punctuated};
 
 #[derive(Deserialize)]
 struct BuildConfig {
@@ -52,6 +53,89 @@ pub fn include_benches(_: TokenStream) -> TokenStream {
 }
 
 #[proc_macro]
+pub fn if_sensor(input: TokenStream) -> TokenStream {
+    let args = parse_macro_input!(input with Punctuated::<Expr, Token![,]>::parse_terminated);
+
+    let config: BuildConfig =
+        toml::from_str(&std::fs::read_to_string("setup.toml").unwrap()).unwrap();
+
+    let mut iter = args.into_iter();
+    let sensor_name_expr = iter.next().unwrap();
+    let exists_value = iter.next().unwrap();
+    let not_exists_value = iter.next().unwrap();
+
+    let sensor_name_literal = if let Expr::Lit(expr_lit) = &sensor_name_expr
+        && let syn::Lit::Str(lit_str) = &expr_lit.lit
+    {
+        lit_str.value()
+    } else {
+        return syn::Error::new_spanned(
+            &sensor_name_expr,
+            "first argument must be a string literal",
+        )
+        .to_compile_error()
+        .into();
+    };
+
+    if config
+        .sensors
+        .iter()
+        .any(|s| s.to_case(Case::Pascal) == sensor_name_literal)
+    {
+        quote! { #exists_value }
+    } else {
+        quote! { #not_exists_value }
+    }
+    .into()
+}
+
+#[proc_macro]
+pub fn sensor_kind(_: TokenStream) -> TokenStream {
+    let config: BuildConfig =
+        toml::from_str(&std::fs::read_to_string("setup.toml").unwrap()).unwrap();
+
+    let sensors_caps = config
+        .sensors
+        .iter()
+        .map(|p| format_ident!("{}", p.to_case(Case::Pascal)))
+        .collect::<Vec<_>>();
+    let sensors_str = config
+        .sensors
+        .iter()
+        .map(|p| p.to_case(Case::Pascal))
+        .collect::<Vec<_>>();
+
+    quote! {
+        #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+        pub enum SensorKind {
+            #(#sensors_caps),*
+        }
+
+        impl SensorKind {
+            pub fn get(item: &str) -> Option<SensorKind> {
+                match item {
+                    #(
+                        #sensors_str => Some(SensorKind::#sensors_caps),
+                    )*
+                    _ => None,
+                }
+            }
+        }
+
+        impl core::fmt::Display for SensorKind {
+            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                match self {
+                    #(
+                        SensorKind::#sensors_caps => write!(f, "{}", #sensors_str),
+                    )*
+                }
+            }
+        }
+    }
+    .into()
+}
+
+#[proc_macro]
 pub fn include_sensors(_: TokenStream) -> TokenStream {
     let config: BuildConfig =
         toml::from_str(&std::fs::read_to_string("setup.toml").unwrap()).unwrap();
@@ -70,14 +154,12 @@ pub fn include_sensors(_: TokenStream) -> TokenStream {
     }
 
     quote! {
-        pub enum SensorKind {
-            #(#sensors_caps),*
-        }
-
-        pub static SENSORS: std::sync::OnceLock<tokio::sync::Mutex<Vec<Box<dyn common::sensor::Sensor>>>> = std::sync::OnceLock::new();
+        pub static SENSORS: std::sync::OnceLock<Vec<Box<dyn common::sensor::Sensor>>> = std::sync::OnceLock::new();
+        pub static SENSOR_ARGS: std::sync::OnceLock<Vec<Box<dyn common::sensor::SensorArgs>>> = std::sync::OnceLock::new();
 
         pub fn init_sensors() {
-            SENSORS.set(tokio::sync::Mutex::new(vec![#(Box::new(#sensors::#sensors_caps::default()),)*])).unwrap();
+            SENSORS.set(vec![#(Box::new(#sensors::#sensors_caps::default()),)*]).unwrap();
+            SENSOR_ARGS.set(vec![#(Box::new(#sensors::#sensor_config::default()),)*]).unwrap();
             // hack to prevent serde issues
             #(
                 serde_json::to_string(&#sensors::#sensors_caps::default()).unwrap();
@@ -85,17 +167,6 @@ pub fn include_sensors(_: TokenStream) -> TokenStream {
             #(
                 serde_json::to_string(&#sensors::#sensor_config::default()).unwrap();
             )*
-        }
-
-        impl SensorKind {
-            pub fn filename(&self) -> &'static str {
-                use common::sensor::Sensor;
-                match *self {
-                    #(
-                        SensorKind::#sensors_caps => #sensors::#sensors_caps::default().filename(),
-                    )*
-                }
-            }
         }
     }
     .into()

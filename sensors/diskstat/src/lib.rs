@@ -11,6 +11,7 @@ use common::{
 };
 use eyre::{Context, Result};
 use flume::{Receiver, Sender};
+use sensor_common::SensorKind;
 use serde::{Deserialize, Serialize};
 use tokio::{
     fs::{File, read_to_string},
@@ -26,8 +27,8 @@ pub struct DiskstatConfig;
 
 #[typetag::serde]
 impl SensorArgs for DiskstatConfig {
-    fn name(&self) -> &'static str {
-        "DiskStat"
+    fn name(&self) -> SensorKind {
+        SensorKind::Diskstat
     }
 }
 
@@ -38,8 +39,8 @@ struct InternalDiskStatConfig {
 
 #[typetag::serde]
 impl SensorArgs for InternalDiskStatConfig {
-    fn name(&self) -> &'static str {
-        "DiskStat"
+    fn name(&self) -> SensorKind {
+        SensorKind::Diskstat
     }
 }
 
@@ -66,8 +67,8 @@ struct DiskStatData {
 const DISKSTAT_FILENAME: &str = "diskstat.csv";
 
 impl Sensor for Diskstat {
-    fn name(&self) -> &'static str {
-        "DiskStat"
+    fn name(&self) -> SensorKind {
+        SensorKind::Diskstat
     }
 
     fn filename(&self) -> &'static str {

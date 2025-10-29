@@ -12,6 +12,7 @@ use common::{
 };
 use eyre::{Context, ContextCompat, Result};
 use flume::{Receiver, Sender};
+use sensor_common::SensorKind;
 use serde::{Deserialize, Serialize};
 use sysinfo::{MemoryRefreshKind, Pid, ProcessRefreshKind, System};
 use tokio::{
@@ -29,8 +30,8 @@ pub struct SysinfoConfig {
 
 #[typetag::serde]
 impl SensorArgs for SysinfoConfig {
-    fn name(&self) -> &'static str {
-        "Sysinfo"
+    fn name(&self) -> SensorKind {
+        SensorKind::Sysinfo
     }
 }
 
@@ -40,8 +41,8 @@ const SYSINFO_FILENAME: &str = "sysinfo.csv";
 pub struct Sysinfo;
 
 impl Sensor for Sysinfo {
-    fn name(&self) -> &'static str {
-        "Sysinfo"
+    fn name(&self) -> SensorKind {
+        SensorKind::Sysinfo
     }
 
     fn filename(&self) -> &'static str {

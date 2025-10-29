@@ -13,3 +13,4 @@ typetag.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 async-io.workspace = true
+sensor-common.workspace = true

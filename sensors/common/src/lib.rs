@@ -1,0 +1,1 @@
+macros::sensor_kind!();

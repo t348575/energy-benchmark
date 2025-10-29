@@ -4,10 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+macros.workspace = true
+sensor-common.workspace = true
 common.workspace = true
 default-sensors.workspace = true
 default-benches.workspace = true
-diskstat = { path = "../../sensors/diskstat" }
-powersensor3 = { path = "../../sensors/powersensor3" }
-rapl = { path = "../../sensors/rapl" }
-sysinfo = { path = "../../sensors/sysinfo" }

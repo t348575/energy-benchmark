@@ -19,8 +19,13 @@ pub struct Config {
     pub settings: Settings,
     pub benches: Vec<InnerBench>,
     pub bench_args: Vec<Box<dyn BenchArgs>>,
-    pub sensors: Vec<String>,
-    pub sensor_args: Vec<Box<dyn SensorArgs>>,
+    pub sensors: Vec<Sensor>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Sensor {
+    pub sensor: sensor_common::SensorKind,
+    pub args: Option<Box<dyn SensorArgs>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,6 +38,8 @@ pub struct Settings {
     pub cpu_freq: Option<CpuFreq>,
     pub cpu_max_power_watts: f64,
     pub cgroup_io: Option<CgroupIo>,
+    pub sleep_between_experiments: Option<u64>,
+    pub sleep_after_writes: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

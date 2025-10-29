@@ -231,6 +231,10 @@ pub trait Bench: Debug + DynClone + Downcast + Send + Sync {
     ) -> Result<()> {
         Ok(())
     }
+
+    /// Returns true if the benchmark performed write operations
+    /// This is used to determine if energy-benchmark should sleep based on [`Settings::sleep_after_writes`]
+    fn write_hint(&self) -> bool;
 }
 clone_trait_object!(Bench);
 impl_downcast!(Bench);

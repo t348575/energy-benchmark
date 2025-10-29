@@ -7,6 +7,7 @@ edition = "2024"
 convert_case = "0.8"
 proc-macro2 = "1.0"
 quote = "1.0"
+syn = "2.0"
 serde.workspace = true
 toml.workspace = true
 

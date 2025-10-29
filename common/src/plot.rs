@@ -90,7 +90,7 @@ pub fn collect_run_groups(
     Ok(unique.into_values().collect())
 }
 
-pub async fn ensure_plot_dirs(dirs: &[PathBuf]) -> Result<()> {
+pub async fn ensure_dirs(dirs: &[PathBuf]) -> Result<()> {
     let create_jobs = dirs.iter().map(create_dir_all);
     for res in join_all(create_jobs).await {
         res?;

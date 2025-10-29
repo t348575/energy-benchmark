@@ -11,6 +11,7 @@ use common::{
 use eyre::{Context, ContextCompat, Result, eyre};
 use flume::{Receiver, Sender};
 use reqwest::Client;
+use sensor_common::SensorKind;
 use serde::{Deserialize, Serialize};
 use tokio::{spawn, task::JoinHandle, time::sleep};
 use tracing::error;
@@ -18,12 +19,13 @@ use tracing::error;
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct NetioHttpConfig {
     pub url: String,
+    pub load_name: String,
 }
 
 #[typetag::serde]
 impl SensorArgs for NetioHttpConfig {
-    fn name(&self) -> &'static str {
-        "NetioHttp"
+    fn name(&self) -> SensorKind {
+        SensorKind::NetioHttp
     }
 }
 
@@ -33,8 +35,8 @@ const NETIO_FILENAME: &str = "netio-http.csv";
 pub struct NetioHttp;
 
 impl Sensor for NetioHttp {
-    fn name(&self) -> &'static str {
-        "NetioHttp"
+    fn name(&self) -> SensorKind {
+        SensorKind::NetioHttp
     }
 
     fn filename(&self) -> &'static str {
@@ -80,13 +82,7 @@ impl Sensor for NetioHttp {
 }
 
 async fn init_netio_http(_: NetioHttpConfig) -> Result<((), Vec<String>)> {
-    let sensor_names = [
-        "voltage",
-        "current",
-        "total_load",
-        "output1_load",
-        "output2_load",
-    ];
+    let sensor_names = ["voltage", "current", "load"];
     Ok(((), sensor_names.into_iter().map(|x| x.to_owned()).collect()))
 }
 
@@ -101,14 +97,14 @@ struct NetioHttpResponse {
 #[serde(rename_all = "PascalCase")]
 struct GlobalMeasure {
     voltage: f64,
-    total_current: f64,
-    total_load: f64,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 struct Output {
     load: f64,
+    name: String,
+    current: f64,
 }
 
 async fn read_netio_http(args: NetioHttpConfig) -> Result<Vec<f64>, SensorError> {
@@ -124,12 +120,15 @@ async fn read_netio_http(args: NetioHttpConfig) -> Result<Vec<f64>, SensorError>
         .await
         .context("Parse JSON")
         .map_err(SensorError::MajorFailure)?;
-    if res.outputs.len() < 2 {
+    let output = res.outputs.iter().find(|x| x.name.eq(&args.load_name));
+    if output.is_none() {
         return Err(SensorError::MajorFailure(eyre!(
-            "Expected 2 outputs, got {}",
-            res.outputs.len()
+            "Output named {} not found",
+            args.load_name
         )));
     }
+
+    let output = output.unwrap();
     sleep(Duration::from_millis(min(
         500 - start.elapsed().as_millis() as u64,
         500,
@@ -137,9 +136,7 @@ async fn read_netio_http(args: NetioHttpConfig) -> Result<Vec<f64>, SensorError>
     .await;
     Ok(vec![
         res.global_measure.voltage,
-        res.global_measure.total_current,
-        res.global_measure.total_load,
-        res.outputs[0].load,
-        res.outputs[1].load,
+        output.current,
+        output.load,
     ])
 }

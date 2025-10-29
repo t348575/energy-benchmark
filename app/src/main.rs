@@ -1,8 +1,8 @@
-use std::path::PathBuf;
+use std::{collections::HashSet, path::PathBuf};
 
 use clap::{Parser, Subcommand};
 use common::{bench::BenchInfo, config::Config, plot::PlotType};
-use eyre::Result;
+use eyre::{Result, bail};
 use regex::Regex;
 use tokio::fs::{create_dir_all, read_dir, read_to_string, remove_dir_all};
 use tracing::error;
@@ -51,6 +51,11 @@ enum Commands {
     },
     /// List available sensors
     ListSensors,
+    /// Validate config
+    Validate {
+        #[arg(short, long, default_value = "config.yaml")]
+        config_file: String,
+    },
 }
 
 #[tokio::main]
@@ -103,6 +108,10 @@ async fn main() -> Result<()> {
         Commands::Plot { folder } => plot(&folder).await?,
         Commands::Print { folder } => print_commands(&folder).await?,
         Commands::ListSensors => list_sensors().await?,
+        Commands::Validate { config_file } => match validate(&config_file).await {
+            Ok(_) => println!("{config_file} is valid"),
+            Err(err) => println!("{config_file}: {err:#?}"),
+        },
     };
 
     Ok(())
@@ -216,9 +225,24 @@ async fn plot(folder: &str) -> Result<()> {
 }
 
 async fn list_sensors() -> Result<()> {
-    let sensors = default_sensors::SENSORS.get().unwrap().lock().await;
+    let sensors = default_sensors::SENSORS.get().unwrap();
     for sensor in sensors.iter() {
         println!("{}", sensor.name());
+    }
+    Ok(())
+}
+
+async fn validate(config_file: &str) -> Result<()> {
+    let config: Config = serde_yml::from_str(&read_to_string(&config_file).await?)?;
+    let unique_bench_names = config
+        .benches
+        .iter()
+        .map(|x| &x.name)
+        .collect::<HashSet<_>>();
+    if unique_bench_names.len() != config.benches.len() {
+        bail!(
+            "Bench names must be unique! Config file contains multiple benchmarks with the same name."
+        );
     }
     Ok(())
 }

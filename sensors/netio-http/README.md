@@ -10,8 +10,12 @@ The following are recorded to `netio-http.csv`:
 * Output 2 load
 
 ## Configuration
-To use netio-http, add `NetioHttp` to the `sensors` list in your configuration yaml, then add the config citing the url of the PDU to `sensor_args`:
+To use netio-http, add `NetioHttp` to the `sensors` list in your configuration yaml, then specify the URL to access the PDU data, as well as the name of the output device:
 ```
-- type: NetioHttpConfig
-  url: http://some-ip/netio.json
+sensors:
+  - sensor: NetioHttp
+    args:
+      type: NetioHttpConfig
+      url: http://my_device_ip/netio.json
+      load_name: MyDeviceOutputName
 ```

@@ -12,3 +12,4 @@ tracing.workspace = true
 flume.workspace = true
 eyre.workspace = true
 tokio.workspace = true
+sensor-common.workspace = true

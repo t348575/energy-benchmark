@@ -11,4 +11,5 @@ eyre.workspace = true
 tokio.workspace = true
 flume.workspace = true
 tracing.workspace = true
+sensor-common.workspace = true
 reqwest = { version = "0.12", default-features = false, features = ["json"] }

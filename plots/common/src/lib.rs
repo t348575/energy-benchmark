@@ -2,58 +2,109 @@ use std::path::PathBuf;
 
 use common::{
     bench::BenchInfo,
+    sensor::Sensor,
     util::{TimeSeriesAxis, TimeSeriesPlot, TimeSeriesSpec},
 };
 use default_benches::BenchKind;
-use default_sensors::SensorKind;
+use macros::if_sensor;
+use sensor_common::SensorKind;
 
 pub fn default_timeseries_plot(
     kind: BenchKind,
     plot_path: PathBuf,
     data_path: PathBuf,
     name: String,
+    #[allow(unused_variables)]
     bench_info: &BenchInfo,
 ) -> TimeSeriesSpec {
+    let mut plots = Vec::new();
+    let diskstat = if_sensor!(
+        "Diskstat",
+        diskstat::DISKSTAT_PLOT_AXIS.to_vec(),
+        Vec::new()
+    );
+
+    if let Some(ps3) = SensorKind::get("Powersensor3")
+        && !diskstat.is_empty()
+    {
+        plots.push(
+            TimeSeriesPlot::new(
+                None,
+                format!("{name}-ssd"),
+                "SSD Power",
+                TimeSeriesAxis::sensor_time(get_sensor(ps3).filename()),
+                if_sensor!(
+                    "Powersensor3",
+                    powersensor3::POWERSENSOR_PLOT_AXIS.to_vec(),
+                    Vec::new()
+                ),
+            )
+            .with_secondary(diskstat.clone()),
+        );
+    }
+
+    if let Some(rapl) = SensorKind::get("Rapl")
+        && !diskstat.is_empty()
+    {
+        plots.push(
+            TimeSeriesPlot::new(
+                None,
+                format!("{name}-cpu"),
+                "CPU Power",
+                TimeSeriesAxis::sensor_time(get_sensor(rapl).filename()),
+                if_sensor!("Rapl", rapl::RAPL_PLOT_AXIS.to_vec(), Vec::new()),
+            )
+            .with_secondary(diskstat.clone()),
+        );
+    }
+
+    if let Some(sysinfo) = SensorKind::get("Sysinfo")
+        && !diskstat.is_empty()
+    {
+        plots.push(
+            TimeSeriesPlot::new(
+                None,
+                format!("{name}-cpu-freq"),
+                "System Info freq.",
+                TimeSeriesAxis::sensor_time(get_sensor(sysinfo).filename()),
+                if_sensor!("Sysinfo", sysinfo::sysinfo_freq_plot_axis(&bench_info.cpu_topology), Vec::new()),
+            )
+            .with_secondary(diskstat.clone()),
+        );
+    }
+
+    if let Some(sysinfo) = SensorKind::get("Sysinfo")
+        && !diskstat.is_empty()
+    {
+        plots.push(
+            TimeSeriesPlot::new(
+                None,
+                format!("{name}-cpu-load"),
+                "System Info load",
+                TimeSeriesAxis::sensor_time(get_sensor(sysinfo).filename()),
+                if_sensor!("Sysinfo", sysinfo::sysinfo_load_plot_axis(&bench_info.cpu_topology), Vec::new()),
+            )
+            .with_secondary(diskstat),
+        );
+    }
+
     TimeSeriesSpec::new(
         kind.name(),
         plot_path.to_path_buf(),
         data_path,
         &name,
-        vec![
-            TimeSeriesPlot::new(
-                None,
-                format!("{name}-ssd"),
-                "SSD Power",
-                TimeSeriesAxis::sensor_time(SensorKind::Powersensor3.filename()),
-                powersensor3::POWERSENSOR_PLOT_AXIS.to_vec(),
-            )
-            .with_secondary(diskstat::DISKSTAT_PLOT_AXIS.to_vec()),
-            TimeSeriesPlot::new(
-                None,
-                format!("{name}-cpu"),
-                "CPU Power",
-                TimeSeriesAxis::sensor_time(SensorKind::Rapl.filename()),
-                rapl::RAPL_PLOT_AXIS.to_vec(),
-            )
-            .with_secondary(diskstat::DISKSTAT_PLOT_AXIS.to_vec()),
-            TimeSeriesPlot::new(
-                None,
-                format!("{name}-cpu-freq"),
-                "System Info freq.",
-                TimeSeriesAxis::sensor_time(SensorKind::Sysinfo.filename()),
-                sysinfo::sysinfo_freq_plot_axis(&bench_info.cpu_topology),
-            )
-            .with_secondary(diskstat::DISKSTAT_PLOT_AXIS.to_vec()),
-            TimeSeriesPlot::new(
-                None,
-                format!("{name}-cpu-load"),
-                "System Info load",
-                TimeSeriesAxis::sensor_time(SensorKind::Sysinfo.filename()),
-                sysinfo::sysinfo_load_plot_axis(&bench_info.cpu_topology),
-            )
-            .with_secondary(diskstat::DISKSTAT_PLOT_AXIS.to_vec()),
-        ],
+        plots,
     )
+}
+
+fn get_sensor(kind: SensorKind) -> &'static dyn Sensor {
+    default_sensors::SENSORS
+        .get()
+        .unwrap()
+        .iter()
+        .find(|x| x.name() == kind)
+        .unwrap()
+        .as_ref()
 }
 
 #[macro_export]

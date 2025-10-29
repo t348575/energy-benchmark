@@ -11,6 +11,7 @@ use common::{
 };
 use eyre::{Context, ContextCompat, Result};
 use flume::{Receiver, Sender};
+use sensor_common::SensorKind;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::{
@@ -96,8 +97,8 @@ pub struct RaplConfig;
 
 #[typetag::serde]
 impl SensorArgs for RaplConfig {
-    fn name(&self) -> &'static str {
-        "Rapl"
+    fn name(&self) -> SensorKind {
+        SensorKind::Rapl
     }
 }
 
@@ -107,8 +108,8 @@ const RAPL_FILENAME: &str = "rapl.csv";
 pub struct Rapl;
 
 impl Sensor for Rapl {
-    fn name(&self) -> &'static str {
-        "Rapl"
+    fn name(&self) -> SensorKind {
+        SensorKind::Rapl
     }
 
     fn filename(&self) -> &'static str {

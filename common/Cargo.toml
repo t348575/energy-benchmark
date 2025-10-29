@@ -19,4 +19,5 @@ regex.workspace = true
 futures.workspace = true
 serde_json.workspace = true
 rayon.workspace = true
+sensor-common.workspace = true
 nix = { version = "0.30", features = ["process"] }

@@ -31,25 +31,28 @@ Example configuration:
 name: rocksdb                                   # Prefix for result folder
 settings:
   device: /dev/nvme2n1                          # Device to run benchmarks on
-  numa:                                         # Force a NUMA configuration. Optional, will pass the option to the benchmark if it supports, else uses numactl
+  numa:                                         # Optional, force a NUMA configuration, will pass the option to the benchmark if it supports, else uses numactl
     cpunodebind: 1
     membind: 1
-  nvme_power_states: [0, 1]                     # NVMe power states to test. Optional, will not set any state by default
-  max_repeat: 5                                 # Maximum number of repetitions of each benchmark configuration. Optional, will not perform repetitions if not set 
-  should_trace: true                            # Use bpftrace to trace NVMe calls. Optional, disabled by default
+  nvme_power_states: [0, 1]                     # Optional, NVMe power states to test, will not set any state by default.
+  max_repeat: 5                                 # Optional, Maximum number of repetitions of each benchmark configuration, will not perform repetitions if not set.
+  should_trace: true                            # Optional, Use bpftrace to trace NVMe calls, disabled by default.
   cpu_max_power_watts: 200                      # Your CPU's maximum rated power, used for filtering faulty readings during plot generation
-  cpu_freq:                                     # Limit CPU frequency, Optional.
+  sleep_between_experiments: 60                 # Optional, benchmark sits idle for X seconds after each experiment
+  sleep_after_writes: 60                        # Optional, benchmark sits idle for X seconds after each experiment only IF write_hint returns true
+                                                # i.e. if the experiment might have performed write operations (to allow for GC settle)
+  cpu_freq:                                     # Optional, Limit CPU frequency.
     freq: 1200000
     default_governor: schedutil                 # Default frequency governor to return to after the benchmark
-  cgroup_io:                                    # Use Cgroup v2 IO, Optional.
-    max:                                        # io.max. Optional.
+  cgroup_io:                                    # Optional, Use Cgroup v2 IO limits.
+    max:                                        # Optional, io.max.
       bps:                                      # specify bps or iops
         r: 629145600
         w: 629145600
-    weight: 200                                 # io.weight. Optional.
-    latency: 50                                 # io.latency. Optional.
+    weight: 200                                 # Optional, io.weight.
+    latency: 50                                 # Optional, io.latency.
     cost:
-      qos: Auto                                 # io.cost.qos. Optional, specify Auto or User.
+      qos: Auto                                 # Optional, io.cost.qos, specify Auto or User.
       # qos: !User
       #   pct:
       #     r: 45
@@ -60,7 +63,7 @@ settings:
       #   scaling:
       #     min: 10
       #     max: 85
-      model: Auto                               # io.cost.model. Optional, specify Auto or User.
+      model: Auto                               # Optional, io.cost.model, specify Auto or User.
       # model: !User
       #   bps:
       #     r: 629145600
@@ -79,12 +82,16 @@ bench_args:                                     # Global arguments for benchmark
   - type: FioConfig
     program: ../fio/fio
 
-sensors: [Powersensor3, Sysinfo]                # Sensors to record
-sensor_args:                                    # Sensor arguments always compulsory, always suffixed with `Config` consult specific sensor README
-  - type: Powersensor3Config
-    device: /dev/ttyACM0
-  - type: SysinfoConfig
-    interval: 10
+sensors:                                        # Sensors to record
+  - sensor: Powersensor3
+    args:
+      type: Powersensor3Config
+      device: /dev/ttyACM0
+  - sensor: Rapl
+  - sensor: Sysinfo
+    args:                                       # Specify sensor arguments if required, always suffixed with `Config` consult specific sensor README.
+      type: SysinfoConfig
+      interval: 10
 
 benches:                                        # Benchmarks
   - name: a                                     # Name to prefix result data directory

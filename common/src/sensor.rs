@@ -27,9 +27,10 @@ pub enum SensorReply {
     FileDumpComplete,
 }
 
-pub trait Sensor: Debug + Send {
+/// All [`Sensor`] implementations are expected to implement [`Default`]
+pub trait Sensor: Debug + Send + Sync {
     /// Name of the sensor, for identification
-    fn name(&self) -> &'static str;
+    fn name(&self) -> sensor_common::SensorKind;
     /// Sensor data filename
     fn filename(&self) -> &'static str;
     /// Should start an async task that collects sensor data using [`tokio::task::spawn`]
@@ -48,8 +49,9 @@ pub trait Sensor: Debug + Send {
 }
 
 #[typetag::serde(tag = "type")]
+/// All [`SensorArgs`] implementations are expected to implement [`Default`]
 pub trait SensorArgs: Debug + DynClone + Downcast + Send + Sync {
-    fn name(&self) -> &'static str;
+    fn name(&self) -> sensor_common::SensorKind;
 }
 clone_trait_object!(SensorArgs);
 impl_downcast!(SensorArgs);

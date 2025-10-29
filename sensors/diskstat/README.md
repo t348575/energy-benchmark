@@ -15,7 +15,8 @@ The following is recorded in `diskstat.csv`:
 * Write ticks
 
 ## Configuration
-To use diskstat, add `DiskStat` to the `sensors` list in your configuration yaml, then add the config citing the disk to `sensor_args` (nvme2n1 shown as an example):
+To use diskstat, add `DiskStat` to the `sensors` list in your configuration yaml, no configuration required.
 ```
-- type: DiskStatConfig
+sensors:
+  - sensor: Diskstat
 ```

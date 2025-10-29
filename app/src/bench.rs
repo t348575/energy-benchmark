@@ -11,13 +11,14 @@ use common::{
     bench::{Bench, BenchArgs, BenchInfo, BenchParams, Cmd, CmdsResult},
     config::Config,
     plot::{PlotType, plot},
-    sensor::{Sensor, SensorArgs, SensorRequest},
+    sensor::SensorRequest,
     util::{
         chown_user, get_cpu_topology, remove_indices, simple_command_with_output_no_dir,
         write_one_line,
     },
 };
 use console::style;
+use default_sensors::SENSOR_ARGS;
 use eyre::{Context, Result, bail};
 use flume::unbounded;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -44,6 +45,31 @@ pub async fn run_benchmark(config_file: String, no_progress: bool, skip_plot: bo
         );
     }
 
+    let cpu_min_freq = read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_min_freq")
+        .await?
+        .trim()
+        .parse()?;
+    let cpu_max_freq = read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq")
+        .await?
+        .trim()
+        .parse()?;
+
+    let cpu_topology = get_cpu_topology().await?;
+
+    if let Some(cpu_freq) = &config.settings.cpu_freq {
+        if cpu_freq.freq < cpu_min_freq {
+            bail!("Minimum supported CPU frequency is {cpu_min_freq} Mhz");
+        }
+
+        if cpu_freq.freq > cpu_max_freq {
+            bail!("Maximum supported CPU frequency is {cpu_max_freq} Mhz");
+        }
+
+        set_cpu_freq(cpu_freq.freq, cpu_freq.freq, "performance")
+            .await
+            .context("Set CPU frequency")?;
+    }
+
     _ = simple_command_with_output_no_dir("umount", &[&config.settings.device]).await;
     let file_prefix = Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
     println!(
@@ -51,32 +77,33 @@ pub async fn run_benchmark(config_file: String, no_progress: bool, skip_plot: bo
         config.name
     );
 
-    if let Some(cpu_freq) = &config.settings.cpu_freq {
-        set_cpu_freq(cpu_freq.freq, cpu_freq.freq, "performance")
-            .await
-            .context("Set CPU frequency")?;
-    }
-
     let progress = Progress::new(!no_progress, &config)?;
 
-    let sensor_objects = default_sensors::SENSORS.get().unwrap().lock().await;
+    let sensor_objects = default_sensors::SENSORS.get().unwrap();
     let mut sensors = Vec::new();
     let mut sensor_replies = Vec::new();
     let mut loaded_sensors = Vec::new();
     let mut sensor_handles = Vec::new();
 
     for s in &config.sensors {
-        if let Some(obj) = sensor_objects.iter().find(|s_obj| s_obj.name() == s) {
-            let sensor_args = get_sensor_args(&config.sensor_args, obj.as_ref())?;
+        if let Some(obj) = sensor_objects.iter().find(|s_obj| s_obj.name() == s.sensor) {
             let (req_tx, req_rx) = unbounded();
             let (resp_tx, resp_rx) = unbounded();
-            sensor_handles.push(obj.start(&*sensor_args, &config.settings, req_rx, resp_tx)?);
+            let args = match &s.args {
+                Some(a) => a,
+                None => SENSOR_ARGS
+                    .get()
+                    .unwrap()
+                    .iter()
+                    .find(|x| x.name() == s.sensor)
+                    .unwrap(),
+            };
+            sensor_handles.push(obj.start(&**args, &config.settings, req_rx, resp_tx)?);
             sensors.push(req_tx);
             sensor_replies.push(resp_rx);
             loaded_sensors.push(s);
         }
     }
-    drop(sensor_objects);
 
     debug!("Loaded sensors: {loaded_sensors:?}");
     let results_path = PathBuf::from("results").join(format!("{}-{file_prefix}", config.name));
@@ -110,17 +137,6 @@ pub async fn run_benchmark(config_file: String, no_progress: bool, skip_plot: bo
         .await
         .context("Fetch NVMe power states")?;
     debug!("Fetched NVMe power states: {device_power_states:?}");
-
-    let cpu_min_freq = read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_min_freq")
-        .await?
-        .trim()
-        .parse()?;
-    let cpu_max_freq = read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq")
-        .await?
-        .trim()
-        .parse()?;
-
-    let cpu_topology = get_cpu_topology().await?;
 
     let mut bench_info = BenchInfo {
         param_map: HashMap::new(),
@@ -305,6 +321,16 @@ pub async fn run_benchmark(config_file: String, no_progress: bool, skip_plot: bo
                         .await
                         .context("Error running post experiment")?;
 
+                    if let Some(sleep_time) = &config.settings.sleep_between_experiments {
+                        sleep(Duration::from_secs(*sleep_time)).await;
+                    }
+
+                    if let Some(sleep_after_writes) = &config.settings.sleep_after_writes
+                        && bench_obj.write_hint()
+                    {
+                        sleep(Duration::from_secs(*sleep_after_writes)).await;
+                    }
+
                     i += 1;
                     if i >= experiment.repeat + total_outliers {
                         let outliers = bench_obj.check_results(&data_path, &dirs).await?;
@@ -423,18 +449,6 @@ fn get_bench_args(bench_args: &[Box<dyn BenchArgs>], bench: &dyn Bench) -> Box<d
     }
     info!("Could not find bench args for bench {}", bench.name());
     bench.default_bench_args()
-}
-
-fn get_sensor_args(
-    sensor_args: &[Box<dyn SensorArgs>],
-    sensor: &dyn Sensor,
-) -> Result<Box<dyn SensorArgs>> {
-    for args in sensor_args {
-        if args.name() == sensor.name() {
-            return Ok(args.clone());
-        }
-    }
-    bail!("Could not find sensor args for sensor {}", sensor.name())
 }
 
 fn calculate_total_units(config: &Config) -> usize {

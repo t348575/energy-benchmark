@@ -1,20 +1,17 @@
 [package]
-name = "powersensor3"
+name = "cmd-basic"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-cxx.workspace = true
-thiserror.workspace = true
 common.workspace = true
 serde.workspace = true
 typetag.workspace = true
 eyre.workspace = true
-flume.workspace = true
+async-trait.workspace = true
 tokio.workspace = true
+serde_json.workspace = true
 tracing.workspace = true
-async-io.workspace = true
-sensor-common.workspace = true
-
-[build-dependencies]
-cxx-build.workspace = true
+futures.workspace = true
+rayon.workspace = true
+default-benches.workspace = true

@@ -29,16 +29,19 @@ common = { path = "common" }
 # left in 0.8 to avoid breaking changes
 toml = "0.8"
 
+macros = { path = "macros" }
 default-sensors = { path = "sensors/default-sensors" }
 default-benches = { path = "benches/default-benches" }
 default-plots = { path = "plots/default-plots" }
 plot-common = { path = "plots/common" }
+sensor-common = { path = "sensors/common" }
 
 [build-dependencies]
 toml_edit = "0.23"
 toml.workspace = true
 eyre.workspace = true
 regex.workspace = true
+build-print = "1"
 
 [profile.release]
 codegen-units = 1

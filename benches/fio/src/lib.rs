@@ -259,6 +259,16 @@ impl Bench for Fio {
         self.io_engines[0].eq("spdk")
     }
 
+    fn write_hint(&self) -> bool {
+        matches!(
+            &self.test_type._type,
+            FioTestType::Write
+                | FioTestType::ReadWrite
+                | FioTestType::Randwrite
+                | FioTestType::RandReadWrite
+        )
+    }
+
     async fn experiment_init(
         &self,
         _data_dir: &Path,

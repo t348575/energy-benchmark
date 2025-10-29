@@ -6,7 +6,7 @@ use std::{
 use common::{
     bench::{BenchInfo, BenchParams},
     config::{Config, Settings},
-    plot::{HeatmapJob, Plot, PlotType, collect_run_groups, ensure_plot_dirs, render_heatmaps},
+    plot::{HeatmapJob, Plot, PlotType, collect_run_groups, ensure_dirs, render_heatmaps},
     util::{
         BarChartKind, SectionStats, TimeSeriesAxis, TimeSeriesPlot, TimeSeriesSpec,
         calculate_sectioned, make_power_state_bar_config, parse_data_size, parse_time,
@@ -30,7 +30,7 @@ use tracing::debug;
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct FioBasic {
-    pub variable: String,
+    pub variables: Vec<String>,
     pub x_label: String,
     pub group: Option<Group>,
     pub labels: Option<Vec<String>>,
@@ -50,6 +50,7 @@ struct PlotEntry {
     args: Fio,
     ssd_power: SectionStats,
     cpu_power: SectionStats,
+    system_power: SectionStats,
     plot: FioBasic,
     load: f64,
     freq: f64,
@@ -131,11 +132,13 @@ impl Plot for FioBasic {
                 let ps3 = read_to_string(run_dir.join("powersensor3.csv")).await;
                 let rapl = read_to_string(run_dir.join("rapl.csv")).await;
                 let sysinfo = read_to_string(run_dir.join("sysinfo.csv")).await;
+                let system = read_to_string(run_dir.join("netio-http.csv")).await;
                 (
                     results,
                     ps3,
                     rapl,
                     sysinfo,
+                    system,
                     group.dir.clone(),
                     info_clone,
                     plot_clone,
@@ -147,10 +150,11 @@ impl Plot for FioBasic {
         let ready_entries = entries
             .into_par_iter()
             .map(|item| {
-                let (json, powersensor3, rapl, sysinfo, _, info, plot) = item;
+                let (json, powersensor3, rapl, sysinfo, system, _, info, plot) = item;
                 let rapl = rapl.context("Read rapl").unwrap();
                 let powersensor3 = powersensor3.context("Read powersensor3").unwrap();
                 let sysinfo = sysinfo.context("Read sysinfo").unwrap();
+                let system = system.context("Read system power").unwrap();
                 let fio_result = json
                     .context(format!("Could not parse fio results.json for {info:#?}"))
                     .unwrap();
@@ -204,12 +208,24 @@ impl Plot for FioBasic {
                 .context("Calculate sysinfo means")
                 .unwrap();
 
+                let (_, system, _) = calculate_sectioned::<_, 0>(
+                    None,
+                    &system,
+                    &["load"],
+                    &[(0.0, settings.cpu_max_power_watts * 2.0)],
+                    power_energy_calculator,
+                    Some(runtime + ramp_time),
+                )
+                .context("Calculate powersensor3 means")
+                .unwrap();
+
                 PlotEntry {
                     result: fio_result,
                     args: info.args.downcast_ref::<Fio>().unwrap().clone(),
                     info,
                     ssd_power: ps3,
                     cpu_power: rapl,
+                    system_power: system,
                     plot: plot.clone(),
                     freq,
                     load,
@@ -226,7 +242,7 @@ impl Plot for FioBasic {
         let latency_dir = plot_path.join("latency");
         let power_dir = plot_path.join("power");
         let efficiency_dir = plot_path.join("efficiency");
-        ensure_plot_dirs(&[
+        ensure_dirs(&[
             throughput_dir.clone(),
             latency_dir.clone(),
             power_dir.clone(),
@@ -291,6 +307,14 @@ impl Plot for FioBasic {
             (
                 ready_entries.clone(),
                 settings,
+                power_dir.join(format!("{experiment_name}-system.pdf")),
+                "power",
+                Some("System"),
+                |data| data.system_power.power.unwrap(),
+            ),
+            (
+                ready_entries.clone(),
+                settings,
                 power_dir.join(format!("{experiment_name}-freq.pdf")),
                 "freq",
                 Some("CPU"),
@@ -330,7 +354,7 @@ impl FioBasic {
         plot_path: &Path,
     ) -> Result<()> {
         let num_power_states = settings.nvme_power_states.clone().unwrap_or(vec![0]).len();
-        let (order, labels) = self.get_order_labels(&ready_entries)?;
+        let (order, labels) = self.get_order_labels(&ready_entries);
         let mut iops_j = vec![vec![0f64; num_power_states]; order.len()];
         let mut iops_j_cpu = iops_j.clone();
         let mut edp = iops_j.clone();
@@ -361,7 +385,7 @@ impl FioBasic {
                 let latency = item.result.jobs.iter().map(mean_latency).sum::<f64>()
                     / item.result.jobs.len() as f64;
                 let p99_latency = item.result.jobs.iter().map(mean_p99_latency).sum::<f64>();
-                let x = *order.get(&self.get_order_key(item).unwrap()).unwrap();
+                let x = *order.get(&self.get_order_key(item)).unwrap();
                 let y = if item.info.power_state == -1 {
                     0
                 } else {
@@ -463,7 +487,7 @@ impl FioBasic {
     ) -> Result<()> {
         let num_power_states = settings.nvme_power_states.clone().unwrap_or(vec![0]).len();
         let mut results = vec![vec![]; num_power_states];
-        let (order, labels) = self.get_order_labels(&ready_entries)?;
+        let (order, labels) = self.get_order_labels(&ready_entries);
 
         let experiment_name = match &self.group {
             Some(group) => group.name.clone(),
@@ -481,7 +505,7 @@ impl FioBasic {
         }
 
         for item in results.iter_mut() {
-            item.sort_by_key(|entry| order.get(&self.get_order_key(&entry.0).unwrap()).unwrap());
+            item.sort_by_key(|entry| order.get(&self.get_order_key(&entry.0)).unwrap());
         }
 
         let results = results
@@ -500,8 +524,8 @@ impl FioBasic {
         plot_bar_chart(&filepath, results, labels, config, bench_info)
     }
 
-    fn get_order_key(&self, entry: &PlotEntry) -> Result<String> {
-        Ok(match self.variable.as_str() {
+    fn get_order_key(&self, entry: &PlotEntry) -> String {
+        let matcher = |variable: &str| match variable {
             "request_sizes" => entry.args.request_sizes[0].clone(),
             "io_depths" => entry.args.io_depths[0].to_string(),
             "num_jobs" => entry.args.num_jobs.as_ref().unwrap()[0].to_string(),
@@ -514,18 +538,20 @@ impl FioBasic {
                         .clone()
                         .join(" ")
                 } else {
-                    bail!("extra_options expects either group or labels")
+                    unreachable!("extra_options expects either group or labels")
                 }
             }
-            _ => bail!("Unsupported plot variable {}", self.variable),
-        })
+            _ => unreachable!("Unsupported plot variable {}", variable),
+        };
+        self.variables.iter().map(|var| matcher(var)).join("-")
     }
 
-    fn get_order_labels(
+    fn get_variable_ordering(
         &self,
+        variable: &str,
         ready_entries: &[PlotEntry],
-    ) -> Result<(HashMap<String, usize>, Vec<String>)> {
-        match self.variable.as_str() {
+    ) -> Vec<(String, usize)> {
+        match variable {
             "request_sizes" => {
                 let set = ready_entries
                     .iter()
@@ -537,14 +563,10 @@ impl FioBasic {
                     })
                     .collect::<HashSet<_>>();
                 let data = set.iter().sorted_by(|a, b| a.0.cmp(&b.0));
-
-                Ok((
-                    data.clone()
-                        .enumerate()
-                        .map(|(x, y)| (y.1.clone(), x))
-                        .collect(),
-                    data.map(|x| x.1.clone()).collect(),
-                ))
+                data.clone()
+                    .enumerate()
+                    .map(|(x, y)| (y.1.clone(), x))
+                    .collect()
             }
             "io_engine" => {
                 let set = ready_entries
@@ -552,31 +574,25 @@ impl FioBasic {
                     .map(|x| x.args.io_engines[0].clone())
                     .collect::<HashSet<_>>();
                 let data = set.iter().sorted();
-                Ok((
-                    data.clone()
-                        .enumerate()
-                        .map(|(x, y)| (y.to_string(), x))
-                        .collect(),
-                    data.map(|x| x.to_string()).collect(),
-                ))
+                data.clone()
+                    .enumerate()
+                    .map(|(x, y)| (y.to_string(), x))
+                    .collect()
             }
             "num_jobs" | "io_depths" => {
                 let set = ready_entries
                     .iter()
-                    .map(|item| match self.variable.as_str() {
+                    .map(|item| match variable {
                         "num_jobs" => item.args.num_jobs.as_ref().unwrap()[0],
                         "io_depths" => item.args.io_depths[0],
                         _ => unreachable!(),
                     })
                     .collect::<HashSet<_>>();
                 let data = set.into_iter().sorted();
-                Ok((
-                    data.clone()
-                        .enumerate()
-                        .map(|(x, y)| (y.to_string(), x))
-                        .collect(),
-                    data.map(|x| x.to_string()).collect(),
-                ))
+                data.clone()
+                    .enumerate()
+                    .map(|(x, y)| (y.to_string(), x))
+                    .collect()
             }
             "extra_options" => {
                 if ready_entries.iter().any(|x| x.plot.group.is_some()) {
@@ -585,40 +601,47 @@ impl FioBasic {
                         .map(|x| x.plot.group.as_ref().unwrap().x_label.clone())
                         .collect::<HashSet<_>>();
                     let data = data.into_iter().sorted();
-                    Ok((
-                        data.clone()
-                            .enumerate()
-                            .map(|(x, y)| (y.clone(), x))
-                            .collect(),
-                        data.collect(),
-                    ))
+                    data.clone()
+                        .enumerate()
+                        .map(|(x, y)| (y.clone(), x))
+                        .collect()
                 } else if ready_entries.iter().any(|x| x.plot.labels.is_some()) {
                     let data = ready_entries
                         .iter()
                         .map(|x| x.args.extra_options.as_ref().unwrap()[0].clone())
                         .collect::<HashSet<_>>();
                     let data = data.iter().sorted();
-                    let labels = ready_entries[0]
-                        .plot
-                        .labels
-                        .as_ref()
-                        .unwrap()
-                        .clone()
-                        .into_iter()
-                        .sorted();
-                    Ok((
-                        data.into_iter()
-                            .enumerate()
-                            .map(|(x, y)| (y.join(" "), x))
-                            .collect(),
-                        labels.collect(),
-                    ))
+                    data.into_iter()
+                        .enumerate()
+                        .map(|(x, y)| (y.join(" "), x))
+                        .collect()
                 } else {
-                    bail!("extra_options expects either group or labels")
+                    unreachable!("extra_options expects either group or labels")
                 }
             }
-            _ => bail!("Unsupported variable {}", self.variable),
+            _ => unreachable!("Unsupported variable {}", variable),
         }
+    }
+
+    fn get_order_labels(
+        &self,
+        ready_entries: &[PlotEntry],
+    ) -> (HashMap<String, usize>, Vec<String>) {
+        let items = self
+            .variables
+            .iter()
+            .map(|var| self.get_variable_ordering(var, ready_entries))
+            .collect::<Vec<_>>();
+        let entries = items.iter().map(|x| x.iter()).multi_cartesian_product();
+
+        let mut order = HashMap::new();
+        let mut labels = Vec::new();
+        for (idx, entry) in entries.enumerate() {
+            let entry_str = entry.iter().map(|x| &x.0).join("-");
+            order.insert(entry_str.clone(), idx);
+            labels.push(entry_str);
+        }
+        (order, labels)
     }
 }
 
@@ -693,7 +716,7 @@ impl Plot for FioBwOverTime {
 
         let bw_dir = plot_path.join("fio_time");
         let bw_inner_dir = bw_dir.join(&groups[0].info.name);
-        ensure_plot_dirs(&[
+        ensure_dirs(&[
             bw_dir.clone(),
             bw_inner_dir.clone(),
             bw_inner_dir.join("plot_data"),

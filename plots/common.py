@@ -41,23 +41,6 @@ def fill_clean(df, offset=0, trim=0, fillmode="ffill", fillmodespread=1000):
         for col in num_cols:
             df[col] = _ffill_limit_nonzero(df[col], limit=fillmodespread)
         df[num_cols] = df[num_cols].fillna(0)
-        # for col in num_cols:
-        #     buffer = []
-        #     current_val = None
-        #     remaining = 0
-        #     for v in df[col]:
-        #         if pd.notna(v) and v != 0:
-        #             current_val = v
-        #             remaining = fillmodespread
-        #             buffer.append(v)
-        #         else:
-        #             if remaining > 0 and current_val is not None:
-        #                 buffer.append(current_val)
-        #                 remaining -= 1
-        #             else:
-        #                 buffer.append(np.nan)
-        #     df[col] = buffer
-        # df.fillna({col: 0 for col in num_cols}, inplace=True)
     else:
         raise ValueError(f"Unknown fillmode: {fillmode!r}")
 

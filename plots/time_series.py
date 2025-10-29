@@ -205,10 +205,10 @@ def read_prepare_bench_data(spec: "Spec"):
                 temp_df.set_index("time", inplace=True)
                 bw_dfs.append(temp_df)
 
-            combined = pd.concat(bw_dfs, axis=1)
-            summed_bw = combined.sum(axis=1).dropna().reset_index()
-            summed_bw.columns = ["time", "bw"]
-            bw_log = summed_bw.copy()
+            sum_bw = pd.concat([df["bw"].reset_index(drop=True) for df in bw_dfs], axis=1).sum(axis=1)
+            time = bw_dfs[0].index.to_series().reset_index(drop=True)
+            bw_log = pd.DataFrame({"time": time, "bw": sum_bw})
+            bw_log = bw_log.dropna()
 
             f = open(os.path.join(spec.results_dir, "results.json"))
             results = json.load(f)

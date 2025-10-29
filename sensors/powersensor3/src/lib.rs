@@ -28,6 +28,7 @@ use common::{
 use cxx::UniquePtr;
 use eyre::{Context, ContextCompat, Result};
 use flume::{Receiver, Sender};
+use sensor_common::SensorKind;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::{spawn, sync::Mutex, task::JoinHandle};
@@ -84,8 +85,8 @@ pub struct Powersensor3Config {
 
 #[typetag::serde]
 impl SensorArgs for Powersensor3Config {
-    fn name(&self) -> &'static str {
-        "Powersensor3"
+    fn name(&self) -> SensorKind {
+        SensorKind::Powersensor3
     }
 }
 
@@ -95,8 +96,8 @@ const POWERSENSOR_FILENAME: &str = "powersensor3.csv";
 pub struct Powersensor3;
 
 impl Sensor for Powersensor3 {
-    fn name(&self) -> &'static str {
-        "Powersensor3"
+    fn name(&self) -> SensorKind {
+        SensorKind::Powersensor3
     }
 
     fn filename(&self) -> &'static str {

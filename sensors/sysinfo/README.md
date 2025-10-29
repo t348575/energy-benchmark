@@ -9,10 +9,13 @@ The following is recorded in `sysinfo.csv`:
 * Memory used by benchmark applicatoin
 
 ## Configuration
-To use sysinfo, add `Sysinfo` to the `sensors` list in your configuration yaml, then add the config to `sensor_args`.
+To use sysinfo, add `Sysinfo` to the `sensors` list in your configuration yaml, and specify the data collection interval.
 
-**NOTE**: Sysinfo data collection can be CPU intensive, so intervals of less than 10ms is not recommended.
+**NOTE**: Sysinfo data collection can be CPU intensive, so intervals of less than 10ms are not recommended.
 ```
-- type: SysinfoConfig
-  interval: 10 # data collection frequency in milliseconds
+sensors:
+  - sensor: Sysinfo
+    args:
+      type: SysinfoConfig
+      interval: 10 # data collection frequency in milliseconds
 ```

@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 pub struct Cmd {
     pub program: String,
     pub args: Option<Vec<String>>,
+    pub write_hint: bool,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -42,6 +43,10 @@ impl Bench for Cmd {
         Ok(0)
     }
 
+    fn write_hint(&self) -> bool {
+        self.write_hint
+    }
+
     fn cmds(
         &self,
         _settings: &Settings,
@@ -57,6 +62,7 @@ impl Bench for Cmd {
                 bench_obj: Box::new(Cmd {
                     program: self.program.clone(),
                     args: Some(args),
+                    write_hint: self.write_hint,
                 }),
             }],
         })
