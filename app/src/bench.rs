@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::Stdio,
     sync::Arc,
     time::{Duration, Instant},
@@ -405,7 +405,7 @@ pub async fn run_benchmark(config_file: String, no_progress: bool, skip_plot: bo
     }
 
     progress.finish().await;
-    sleep(Duration::from_secs(3)).await;
+    sleep(Duration::from_secs(1)).await;
 
     for s in sensors {
         s.send_async(SensorRequest::Quit).await?;
@@ -520,9 +520,9 @@ fn format_seconds(seconds: f64) -> String {
     let seconds = (seconds % 60.0) as u64;
 
     if hours > 0 {
-        format!("{hours:02}:{minutes:02}:{seconds:02}")
+        format!("{hours:02}h:{minutes:02}m:{seconds:02}s")
     } else {
-        format!("{minutes:02}:{seconds:02}")
+        format!("{minutes:02}m:{seconds:02}s")
     }
 }
 
@@ -669,4 +669,94 @@ fn strip_nvme_namespace(device: &str) -> String {
     } else {
         device.to_string()
     }
+}
+
+pub async fn estimate_runtime(config_file: &str) -> Result<()> {
+    let config: Config = serde_yml::from_str(&read_to_string(&config_file).await?)
+        .context(format!("Failed reading {config_file}"))?;
+
+    let mut total = 0;
+    for b in config.benches {
+        let bench_args = get_bench_args(&config.bench_args, &*b.bench);
+        let cmds = b.bench.cmds(&config.settings, &*bench_args, &b.name)?;
+        total += b.bench.runtime_estimate()? * cmds.cmds.len() as u64;
+        if let Some(sleep) = &config.settings.sleep_between_experiments {
+            total += sleep * 1000 * cmds.cmds.len() as u64;
+        }
+
+        if let Some(sleep) = &config.settings.sleep_after_writes
+            && b.bench.write_hint()
+        {
+            total += sleep * 1000 * cmds.cmds.len() as u64;
+        }
+    }
+
+    println!("Estimated runtime: {}", total as f64 / 1000.0);
+    Ok(())
+}
+
+pub async fn generate_info(results_dir: &str) -> Result<()> {
+    let config_file = Path::new(results_dir).join("config.yaml");
+    let config: Config = serde_yml::from_str(&read_to_string(&config_file).await?)
+        .context(format!("Failed reading {:?}", config_file))?;
+
+    let nvme_power_states = match &config.settings.nvme_power_states {
+        Some(ps) => ps.iter().map(|x| *x as i32).collect(),
+        None => vec![],
+    };
+    let nvme_cli_device = strip_nvme_namespace(&config.settings.device);
+    let device_power_states = fetch_nvme_power_states(&nvme_cli_device)
+        .await
+        .context("Fetch NVMe power states")?;
+    debug!("Fetched NVMe power states: {device_power_states:?}");
+
+    let cpu_topology = get_cpu_topology().await?;
+    let cpu_min_freq = read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_min_freq")
+        .await?
+        .trim()
+        .parse()?;
+    let cpu_max_freq = read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq")
+        .await?
+        .trim()
+        .parse()?;
+
+    let mut bench_info = BenchInfo {
+        param_map: HashMap::new(),
+        device_power_states,
+        cpu_freq_limits: (cpu_min_freq, cpu_max_freq),
+        cpu_topology,
+    };
+
+    let info_path = config_file.parent().unwrap().join("info.json");
+    for experiment in &config.benches {
+        let mut ps = nvme_power_states.clone();
+        if ps.is_empty() {
+            ps.push(-1);
+        }
+
+        let bench_args = get_bench_args(&config.bench_args, &*experiment.bench);
+        let CmdsResult { cmds, .. } =
+            experiment
+                .bench
+                .cmds(&config.settings, &*bench_args, &experiment.name)?;
+
+        for power_state in &ps {
+            for Cmd { idx, bench_obj, .. } in cmds.iter() {
+                let folder_name = format!("{}-ps{}-i0-{}", experiment.name, power_state, idx);
+
+                bench_info.param_map.insert(
+                    folder_name,
+                    BenchParams {
+                        args: bench_obj.clone(),
+                        power_state: *power_state,
+                        iteration: 0,
+                        name: experiment.name.clone(),
+                        idx: *idx,
+                    },
+                );
+            }
+        }
+    }
+    write(&info_path, serde_json::to_string_pretty(&bench_info)?).await?;
+    Ok(())
 }

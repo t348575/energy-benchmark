@@ -97,15 +97,7 @@ pub enum SensorError {
 }
 
 /// Utility function to perform sensor recordings in a conventional manner
-pub async fn sensor_reader<
-    Args,
-    Sensor,
-    InitSensor,
-    InitSensorFut,
-    ReadSensorData,
-    ReadSensorFut,
-    SensorData,
->(
+pub async fn sensor_reader<Args, Sensor, InitSensor, InitSensorFut, ReadSensorData, SensorData>(
     rx: Receiver<SensorRequest>,
     tx: Sender<SensorReply>,
     filename: &str,
@@ -120,8 +112,14 @@ where
     Sensor: Clone + Send + 'static,
     InitSensor: Fn(Args) -> InitSensorFut,
     InitSensorFut: Future<Output = Result<(Sensor, Vec<String>)>> + Send + 'static,
-    ReadSensorData: Fn(&Args, &Sensor, &SensorRequest, Instant) -> ReadSensorFut,
-    ReadSensorFut: Future<Output = Result<SensorData, SensorError>>,
+    ReadSensorData: for<'a> Fn(
+        &Args,
+        &'a Sensor,
+        &SensorRequest,
+        Instant,
+    ) -> Pin<
+        Box<dyn Future<Output = Result<SensorData, SensorError>> + Send + 'a>,
+    >,
 {
     debug!("Spawning {} reader", args.name());
     let args_copy = args.clone();
@@ -322,6 +320,7 @@ pub enum BarChartKind {
     Throughput,
     Latency,
     Power,
+    NormalizedPower,
     Freq,
     Load,
 }
@@ -368,7 +367,7 @@ pub fn make_power_state_bar_config(
                 "Latency (ms)",
             )
         }
-        BarChartKind::Power => {
+        BarChartKind::Power | BarChartKind::NormalizedPower => {
             let title = match clean_prefix {
                 Some(prefix) => format!("{} power vs. {}", prefix, x_label.to_lowercase()),
                 None => format!("Power vs. {}", x_label.to_lowercase()),
@@ -1061,8 +1060,8 @@ pub fn sysinfo_average_calculator(data: &[(usize, Vec<f64>)]) -> (f64, f64) {
         .par_iter()
         .map(|(_, v)| {
             let half = v.len() / 2;
-            let freq = v[..half].iter().copied().sum::<f64>() / half as f64;
-            let load = v[half..].iter().copied().sum::<f64>() / half as f64;
+            let freq = v[..half].iter().sum::<f64>() / half as f64;
+            let load = v[half..].iter().sum::<f64>() / half as f64;
             (freq, load, 1usize)
         })
         .reduce(
@@ -1229,7 +1228,11 @@ pub async fn get_cpu_topology() -> Result<HashMap<u32, u32>> {
 }
 
 pub async fn write_one_line<P: AsRef<Path>>(path: P, s: &str) -> io::Result<()> {
-    let mut f = OpenOptions::new().write(true).open(&path).await?;
+    let mut f = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .open(&path)
+        .await?;
     _ = f.write(format!("{s}\n").as_bytes()).await?;
     Ok(())
 }

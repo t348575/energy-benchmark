@@ -10,6 +10,7 @@ use common::{
 };
 use eyre::{Context, ContextCompat, Result, eyre};
 use flume::{Receiver, Sender};
+use futures::future::try_join_all;
 use reqwest::Client;
 use sensor_common::SensorKind;
 use serde::{Deserialize, Serialize};
@@ -18,8 +19,14 @@ use tracing::error;
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct NetioHttpConfig {
+    pub pdus: Vec<NetioHttpPdu>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct NetioHttpPdu {
+    pub alias: String,
     pub url: String,
-    pub load_name: String,
+    pub loads: Vec<String>,
 }
 
 #[typetag::serde]
@@ -33,6 +40,9 @@ const NETIO_FILENAME: &str = "netio-http.csv";
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct NetioHttp;
+
+#[derive(Debug, Clone)]
+struct InternalNetioHttp(usize);
 
 impl Sensor for NetioHttp {
     fn name(&self) -> SensorKind {
@@ -63,12 +73,12 @@ impl Sensor for NetioHttp {
                 args,
                 init_netio_http,
                 |args: &NetioHttpConfig,
-                 _,
+                 s,
                  _,
                  _|
                  -> std::pin::Pin<
                     Box<dyn Future<Output = Result<Vec<f64>, SensorError>> + Send>,
-                > { Box::pin(read_netio_http(args.clone())) },
+                > { Box::pin(read_netio_http(s, args.clone())) },
             )
             .await
             {
@@ -81,9 +91,23 @@ impl Sensor for NetioHttp {
     }
 }
 
-async fn init_netio_http(_: NetioHttpConfig) -> Result<((), Vec<String>)> {
-    let sensor_names = ["voltage", "current", "load"];
-    Ok(((), sensor_names.into_iter().map(|x| x.to_owned()).collect()))
+async fn init_netio_http(args: NetioHttpConfig) -> Result<(InternalNetioHttp, Vec<String>)> {
+    let mut sensor_names = Vec::new();
+    for pdu in args.pdus {
+        sensor_names.push(format!("{}-voltage", pdu.alias));
+        sensor_names.extend(
+            pdu.loads
+                .into_iter()
+                .map(|x| {
+                    [
+                        format!("{}-current", pdu.alias),
+                        format!("load-{}-{x}", pdu.alias),
+                    ]
+                })
+                .flatten(),
+        );
+    }
+    Ok((InternalNetioHttp(sensor_names.len()), sensor_names))
 }
 
 #[derive(Debug, Deserialize)]
@@ -107,36 +131,52 @@ struct Output {
     current: f64,
 }
 
-async fn read_netio_http(args: NetioHttpConfig) -> Result<Vec<f64>, SensorError> {
+async fn read_netio_http(
+    s: &InternalNetioHttp,
+    args: NetioHttpConfig,
+) -> Result<Vec<f64>, SensorError> {
     let start = Instant::now();
     let client = Client::new();
-    let res: NetioHttpResponse = client
-        .get(&args.url)
-        .send()
-        .await
-        .context("Send request")
-        .map_err(SensorError::MajorFailure)?
-        .json()
-        .await
-        .context("Parse JSON")
-        .map_err(SensorError::MajorFailure)?;
-    let output = res.outputs.iter().find(|x| x.name.eq(&args.load_name));
-    if output.is_none() {
-        return Err(SensorError::MajorFailure(eyre!(
-            "Output named {} not found",
-            args.load_name
-        )));
+
+    let tasks = args.pdus.iter().map(|pdu| {
+        let c = client.clone();
+        async move {
+            let res: NetioHttpResponse = c
+                .get(&pdu.url)
+                .send()
+                .await
+                .context("Send request")
+                .map_err(SensorError::MajorFailure)?
+                .json()
+                .await
+                .context("Parse JSON")
+                .map_err(SensorError::MajorFailure)?;
+            Ok::<_, SensorError>(res)
+        }
+    });
+
+    let res = try_join_all(tasks).await?;
+    let mut data = Vec::with_capacity(s.0);
+    for (res, pdu) in res.into_iter().zip(args.pdus.iter()) {
+        data.push(res.global_measure.voltage);
+        for load in pdu.loads.iter() {
+            let output = res.outputs.iter().find(|x| x.name.eq(load));
+            if output.is_none() {
+                return Err(SensorError::MajorFailure(eyre!(
+                    "Output named {} not found",
+                    load
+                )));
+            }
+            let output = output.unwrap();
+            data.push(output.current);
+            data.push(output.load);
+        }
     }
 
-    let output = output.unwrap();
     sleep(Duration::from_millis(min(
         500 - start.elapsed().as_millis() as u64,
         500,
     )))
     .await;
-    Ok(vec![
-        res.global_measure.voltage,
-        output.current,
-        output.load,
-    ])
+    Ok(data)
 }

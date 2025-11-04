@@ -6,7 +6,7 @@ use common::{
     plot::{Plot, PlotType, collect_run_groups, ensure_dirs},
     util::{
         BarChartKind, SectionStats, calculate_sectioned, make_power_state_bar_config,
-        plot_bar_chart, power_energy_calculator,
+        plot_bar_chart, power_energy_calculator, sysinfo_average_calculator,
     },
 };
 use eyre::{Context, Result, bail};
@@ -25,6 +25,8 @@ struct PlotEntry {
     ssd_power: SectionStats,
     cpu_power: SectionStats,
     system_power: SectionStats,
+    freq: f64,
+    load: f64,
 }
 
 #[async_trait::async_trait]
@@ -64,6 +66,7 @@ impl Plot for CmdBasic {
                     read_to_string(run_dir.join("powersensor3.csv")).await,
                     read_to_string(run_dir.join("rapl.csv")).await,
                     read_to_string(run_dir.join("netio-http.csv")).await,
+                    read_to_string(run_dir.join("sysinfo.csv")).await,
                     dir,
                     info,
                 )
@@ -73,9 +76,10 @@ impl Plot for CmdBasic {
         let ready_entries = entries
             .into_par_iter()
             .map(|item| {
-                let (powersensor3, rapl, system, _, info) = item;
+                let (powersensor3, rapl, system, sysinfo, _, info) = item;
                 let rapl = rapl.context("Read rapl").unwrap();
                 let powersensor3 = powersensor3.context("Read powersensor3").unwrap();
+                let sysinfo = sysinfo.context("Read sysinfo").unwrap();
                 let system = system.context("Read system power").unwrap();
 
                 let (_, rapl_overall, _) = calculate_sectioned::<_, 0>(
@@ -102,12 +106,29 @@ impl Plot for CmdBasic {
                 let (_, system, _) = calculate_sectioned::<_, 0>(
                     None,
                     &system,
-                    &["load"],
+                    &[r#"load-\S+"#],
                     &[(0.0, settings.cpu_max_power_watts * 2.0)],
                     power_energy_calculator,
                     None,
                 )
-                .context("Calculate powersensor3 means")
+                .context("Calculate system power means")
+                .unwrap();
+
+                let (_, (freq, load), _) = calculate_sectioned::<_, 0>(
+                    None,
+                    &sysinfo,
+                    &["cpu-[0-9]{0,3}-freq", "cpu-[0-9]{0,3}-load"],
+                    &[
+                        (
+                            bench_info.cpu_freq_limits.0 as f64 / 1000.0,
+                            bench_info.cpu_freq_limits.1 as f64 / 1000.0,
+                        ),
+                        (0.0, f64::MAX),
+                    ],
+                    sysinfo_average_calculator,
+                    None,
+                )
+                .context("Calculate sysinfo means")
                 .unwrap();
 
                 PlotEntry {
@@ -115,6 +136,8 @@ impl Plot for CmdBasic {
                     ssd_power: ps3_overall,
                     cpu_power: rapl_overall,
                     system_power: system,
+                    freq,
+                    load,
                 }
             })
             .collect::<Vec<_>>();
@@ -154,6 +177,22 @@ impl Plot for CmdBasic {
                 "power",
                 "%",
                 |data| data.system_power.power.unwrap(),
+            ),
+            (
+                ready_entries.clone(),
+                settings,
+                power_dir.join(format!("{experiment_name}-freq.pdf")),
+                "freq",
+                "CPU",
+                |data| data.freq,
+            ),
+            (
+                ready_entries.clone(),
+                settings,
+                power_dir.join(format!("{experiment_name}-load.pdf")),
+                "load",
+                "Linux",
+                |data| data.load,
             ),
         ];
 
@@ -203,6 +242,8 @@ impl CmdBasic {
         let chart_kind = match plotting_file {
             "throughput" => BarChartKind::Throughput,
             "power" => BarChartKind::Power,
+            "freq" => BarChartKind::Freq,
+            "load" => BarChartKind::Load,
             other => bail!("Unsupported plotting file {other}"),
         };
         let config = make_power_state_bar_config(chart_kind, x_label, &experiment_name, None);

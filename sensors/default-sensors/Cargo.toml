@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-macros = { path = "../../macros"}
+macros.workspace = true
 serde_json.workspace = true
 common.workspace = true
-tokio.workspace = true
+serde.workspace = true

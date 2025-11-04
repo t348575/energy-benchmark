@@ -23,3 +23,4 @@ setup = { path = "../" }
 indicatif = "0.18"
 console = "0.16"
 regex.workspace = true
+num_cpus.workspace = true

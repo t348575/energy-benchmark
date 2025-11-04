@@ -211,12 +211,12 @@ impl Plot for FioBasic {
                 let (_, system, _) = calculate_sectioned::<_, 0>(
                     None,
                     &system,
-                    &["load"],
+                    &[r#"load-\S+"#],
                     &[(0.0, settings.cpu_max_power_watts * 2.0)],
                     power_energy_calculator,
                     Some(runtime + ramp_time),
                 )
-                .context("Calculate powersensor3 means")
+                .context("Calculate system power means")
                 .unwrap();
 
                 PlotEntry {
@@ -254,7 +254,7 @@ impl Plot for FioBasic {
             Vec<PlotEntry>,
             &Settings,
             PathBuf,
-            &str,
+            BarChartKind,
             Option<&str>,
             fn(&PlotEntry) -> f64,
         )> = vec![
@@ -262,7 +262,7 @@ impl Plot for FioBasic {
                 ready_entries.clone(),
                 settings,
                 throughput_dir.join(format!("{experiment_name}.pdf")),
-                "throughput",
+                BarChartKind::Throughput,
                 None,
                 |data| {
                     data.result
@@ -276,7 +276,7 @@ impl Plot for FioBasic {
                 ready_entries.clone(),
                 settings,
                 latency_dir.join(format!("{experiment_name}.pdf")),
-                "latency",
+                BarChartKind::Latency,
                 None,
                 |data| data.result.jobs.iter().map(mean_latency).sum::<f64>(),
             ),
@@ -284,7 +284,7 @@ impl Plot for FioBasic {
                 ready_entries.clone(),
                 settings,
                 latency_dir.join(format!("{experiment_name}-p99.pdf")),
-                "latency",
+                BarChartKind::Latency,
                 None,
                 |data| data.result.jobs.iter().map(mean_p99_latency).sum::<f64>(),
             ),
@@ -292,7 +292,7 @@ impl Plot for FioBasic {
                 ready_entries.clone(),
                 settings,
                 power_dir.join(format!("{experiment_name}-ssd.pdf")),
-                "power",
+                BarChartKind::Power,
                 Some("SSD"),
                 |data| data.ssd_power.power.unwrap(),
             ),
@@ -300,7 +300,15 @@ impl Plot for FioBasic {
                 ready_entries.clone(),
                 settings,
                 power_dir.join(format!("{experiment_name}-cpu.pdf")),
-                "power",
+                BarChartKind::Power,
+                Some("CPU"),
+                |data| data.cpu_power.power.unwrap(),
+            ),
+            (
+                ready_entries.clone(),
+                settings,
+                power_dir.join(format!("{experiment_name}-norm-cpu.pdf")),
+                BarChartKind::NormalizedPower,
                 Some("CPU"),
                 |data| data.cpu_power.power.unwrap(),
             ),
@@ -308,7 +316,7 @@ impl Plot for FioBasic {
                 ready_entries.clone(),
                 settings,
                 power_dir.join(format!("{experiment_name}-system.pdf")),
-                "power",
+                BarChartKind::Power,
                 Some("System"),
                 |data| data.system_power.power.unwrap(),
             ),
@@ -316,7 +324,7 @@ impl Plot for FioBasic {
                 ready_entries.clone(),
                 settings,
                 power_dir.join(format!("{experiment_name}-freq.pdf")),
-                "freq",
+                BarChartKind::Freq,
                 Some("CPU"),
                 |data| data.freq,
             ),
@@ -324,7 +332,7 @@ impl Plot for FioBasic {
                 ready_entries.clone(),
                 settings,
                 power_dir.join(format!("{experiment_name}-load.pdf")),
-                "load",
+                BarChartKind::Load,
                 Some("Linux"),
                 |data| data.load,
             ),
@@ -361,6 +369,7 @@ impl FioBasic {
         let mut edp_p99 = iops_j.clone();
         let mut edp_total = iops_j.clone();
         let mut bytes_j = iops_j.clone();
+        let mut cpu_only_bytes_j = iops_j.clone();
         let mut bytes_j_cpu = iops_j.clone();
         let experiment_name = match &self.group {
             Some(group) => group.name.clone(),
@@ -399,11 +408,12 @@ impl FioBasic {
                     (iops) / (item.cpu_power.power.unwrap() + item.ssd_power.power.unwrap()),
                     (bytes / 1024.0) / item.ssd_power.power.unwrap(),
                     (bytes / 1024.0)
-                        / (item.cpu_power.power.unwrap() + item.ssd_power.power.unwrap()),
+                    / (item.cpu_power.power.unwrap() + item.ssd_power.power.unwrap()),
                     item.ssd_power.power.unwrap() * latency.powi(2),
                     item.ssd_power.power.unwrap() * p99_latency.powi(2),
                     (item.ssd_power.power.unwrap() + item.cpu_power.power.unwrap())
-                        * latency.powi(2),
+                    * latency.powi(2),
+                    (bytes / 1024.0) / item.cpu_power.power.unwrap(),
                 )
             })
             .collect::<Vec<_>>();
@@ -417,6 +427,7 @@ impl FioBasic {
             edp[x][y] = item.6;
             edp_p99[x][y] = item.7;
             edp_total[x][y] = item.8;
+            cpu_only_bytes_j[x][y] = item.9;
         }
 
         let x_label = self.x_label.as_str();
@@ -438,6 +449,13 @@ impl FioBasic {
             HeatmapJob {
                 filepath: plot_path.join(format!("{}-bytes-j.pdf", &experiment_name)),
                 data: bytes_j,
+                title: "MiB/J",
+                x_label,
+                reverse: false,
+            },
+            HeatmapJob {
+                filepath: plot_path.join(format!("{}-only-cpu-bytes-j.pdf", &experiment_name)),
+                data: cpu_only_bytes_j,
                 title: "MiB/J",
                 x_label,
                 reverse: false,
@@ -480,14 +498,14 @@ impl FioBasic {
         ready_entries: Vec<PlotEntry>,
         settings: &Settings,
         filepath: PathBuf,
-        plotting_file: &str,
+        chart_kind: BarChartKind,
         name: Option<&str>,
         get_mean: fn(&PlotEntry) -> f64,
         bench_info: &BenchInfo,
     ) -> Result<()> {
         let num_power_states = settings.nvme_power_states.clone().unwrap_or(vec![0]).len();
         let mut results = vec![vec![]; num_power_states];
-        let (order, labels) = self.get_order_labels(&ready_entries);
+        let (_, labels) = self.get_order_labels(&ready_entries);
 
         let experiment_name = match &self.group {
             Some(group) => group.name.clone(),
@@ -505,21 +523,26 @@ impl FioBasic {
         }
 
         for item in results.iter_mut() {
-            item.sort_by_key(|entry| order.get(&self.get_order_key(&entry.0)).unwrap());
+            item.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        }
+
+        match chart_kind {
+            BarChartKind::NormalizedPower => {
+                for item in &mut results {
+                    let base = item[0].1;
+                    let factor = 100.0 / base;
+                    for (_, v) in item.iter_mut() {
+                        *v *= factor;
+                    }
+                }
+            }
+            _ => {}
         }
 
         let results = results
             .iter()
             .map(|x| x.iter().map(|x| x.1).collect::<Vec<_>>())
             .collect::<Vec<_>>();
-        let chart_kind = match plotting_file {
-            "throughput" => BarChartKind::Throughput,
-            "latency" => BarChartKind::Latency,
-            "power" => BarChartKind::Power,
-            "freq" => BarChartKind::Freq,
-            "load" => BarChartKind::Load,
-            other => bail!("Unsupported plotting file {other}"),
-        };
         let config = make_power_state_bar_config(chart_kind, &self.x_label, &experiment_name, name);
         plot_bar_chart(&filepath, results, labels, config, bench_info)
     }
@@ -639,7 +662,10 @@ impl FioBasic {
         for (idx, entry) in entries.enumerate() {
             let entry_str = entry.iter().map(|x| &x.0).join("-");
             order.insert(entry_str.clone(), idx);
-            labels.push(entry_str);
+            match &self.labels {
+                Some(label_list) => labels.push(label_list[idx].clone()),
+                None => labels.push(entry_str),
+            }
         }
         (order, labels)
     }

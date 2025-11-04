@@ -23,11 +23,10 @@ def fill_clean(df, offset=0, trim=0, fillmode="ffill", fillmodespread=1000):
     full_idx = pd.RangeIndex(0, max_idx + 1, step=1)
     df = df.reindex(full_idx)
 
-    if offset > 0:
-        df = df[(df.index >= offset) & (df.index < trim)]
-        if df.empty:
-            return df
-        df.index = df.index - df.index[0]
+    df = df[(df.index >= offset) & (df.index < trim)]
+    if df.empty:
+        return df
+    df.index = df.index - df.index[0]
 
     df = df.reset_index().rename(columns={"index": "time"})
     df["time"] = df["time"] / 1000

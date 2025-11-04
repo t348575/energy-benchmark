@@ -3,7 +3,7 @@ use std::{
     path::Path,
 };
 
-use eyre::Result;
+use eyre::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -181,7 +181,7 @@ impl CgroupIo {
             if let Some(qos) = &cost.qos {
                 match qos {
                     CgroupIoCostQos::Auto => {
-                        write_one_line(base.join("io.cost.qos"), "auto").await?
+                        write_one_line(base.parent().unwrap().join("io.cost.qos"), "auto").await?
                     }
                     CgroupIoCostQos::User {
                         pct,
@@ -191,7 +191,7 @@ impl CgroupIo {
                         cmd.write_str(&pct.fmt(("rpct", "wpct")))?;
                         cmd.write_str(&lat.fmt(("rlat", "wlat")))?;
                         cmd.write_str(&scaling.fmt())?;
-                        write_one_line(base.join("io.qos"), "user").await?;
+                        write_one_line(base.parent().unwrap().join("io.cost.qos"), "user").await?;
                     }
                 }
             }
@@ -199,7 +199,7 @@ impl CgroupIo {
             if let Some(model) = &cost.model {
                 match model {
                     CgroupIoCostModel::Auto => {
-                        write_one_line(base.join("io.cost.model"), "auto").await?
+                        write_one_line(base.parent().unwrap().join("io.cost.model"), "auto").await?
                     }
                     CgroupIoCostModel::User {
                         bps,
@@ -209,7 +209,9 @@ impl CgroupIo {
                         cmd.write_str(&bps.fmt(("rbps", "wbps")))?;
                         cmd.write_str(&seqiops.fmt(("rseqiops", "wseqiops")))?;
                         cmd.write_str(&randiops.fmt(("rrandiops", "wrandiops")))?;
-                        write_one_line(base.join("io.model"), "user").await?;
+                        write_one_line(base.parent().unwrap().join("io.cost.model"), "user")
+                            .await
+                            .context("Write io.cost.model file")?;
                     }
                 }
             }

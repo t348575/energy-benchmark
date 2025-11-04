@@ -13,6 +13,8 @@ use tracing_subscriber::{
     util::SubscriberInitExt,
 };
 
+use crate::bench::*;
+
 mod bench;
 
 #[derive(Parser)]
@@ -56,10 +58,19 @@ enum Commands {
         #[arg(short, long, default_value = "config.yaml")]
         config_file: String,
     },
+    /// Estimate runtime
+    Estimate {
+        #[arg(short, long, default_value = "config.yaml")]
+        config_file: String,
+    },
+    /// Generate info.json for ideal run
+    GenerateInfo {
+        #[arg(short, long, default_value = "config.yaml")]
+        config_file: String,
+    },
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     let modules: &[&str] = macros::plugin_names_str!();
     let log_level = std::env::var("RUST_LOG").unwrap_or("warn".to_owned());
     let args = Cli::parse();
@@ -94,27 +105,42 @@ async fn main() -> Result<()> {
     default_sensors::init_sensors();
     default_plots::init_plots();
 
-    match args.command {
-        Commands::List => list_benchmarks().await?,
-        Commands::Bench {
-            config_file,
-            skip_plot,
-        } => {
-            if let Err(err) = bench::run_benchmark(config_file, args.no_progress, skip_plot).await {
-                error!("{err:#?}");
-                return Err(err);
-            }
-        }
-        Commands::Plot { folder } => plot(&folder).await?,
-        Commands::Print { folder } => print_commands(&folder).await?,
-        Commands::ListSensors => list_sensors().await?,
-        Commands::Validate { config_file } => match validate(&config_file).await {
-            Ok(_) => println!("{config_file} is valid"),
-            Err(err) => println!("{config_file}: {err:#?}"),
-        },
+    let num_threads = match &args.command {
+        Commands::Bench { .. } => num_cpus::get(),
+        _ => 2,
     };
 
-    Ok(())
+    let body = async {
+        match args.command {
+            Commands::List => list_benchmarks().await?,
+            Commands::Bench {
+                config_file,
+                skip_plot,
+            } => {
+                if let Err(err) = run_benchmark(config_file, args.no_progress, skip_plot).await {
+                    error!("{err:#?}");
+                    return Err(err);
+                }
+            }
+            Commands::Plot { folder } => plot(&folder).await?,
+            Commands::Print { folder } => print_commands(&folder).await?,
+            Commands::ListSensors => list_sensors().await?,
+            Commands::Validate { config_file } => match validate(&config_file).await {
+                Ok(_) => println!("{config_file} is valid"),
+                Err(err) => println!("{config_file}: {err:#?}"),
+            },
+            Commands::Estimate { config_file } => estimate_runtime(&config_file).await?,
+            Commands::GenerateInfo { config_file } => generate_info(&config_file).await?,
+        }
+        Ok(())
+    };
+
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(num_threads)
+        .enable_all()
+        .build()
+        .expect("Failed building the Runtime")
+        .block_on(body)
 }
 
 async fn list_benchmarks() -> Result<()> {
