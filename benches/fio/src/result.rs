@@ -11,6 +11,24 @@ pub struct FioResult {
     pub time: String,
     pub jobs: Vec<Job>,
     pub disk_util: Option<Vec<DiskUtil>>,
+    #[serde(rename = "global options")]
+    pub global_options: Option<GlobalOptions>,
+}
+
+#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GlobalOptions {
+    pub filename: Option<String>,
+    pub direct: Option<String>,
+    pub bs: Option<String>,
+    pub ioengine: Option<String>,
+    pub time_based: Option<String>,
+    pub iodepth: Option<String>,
+    pub log_avg_msec: Option<String>,
+    pub runtime: Option<String>,
+    pub ramp_time: Option<String>,
+    pub rw: Option<String>,
+    pub group_reporting: Option<String>,
+    pub numjobs: Option<String>,
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -48,12 +66,12 @@ pub struct Job {
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct JobOptions {
     pub name: String,
-    pub filename: String,
-    pub rw: String,
-    pub direct: String,
+    pub filename: Option<String>,
+    pub rw: Option<String>,
+    pub direct: Option<String>,
     pub bs: Option<String>,
     pub ioengine: Option<String>,
-    pub time_based: String,
+    pub time_based: Option<String>,
     pub iodepth: Option<String>,
     pub runtime: Option<String>,
     pub ramp_time: Option<String>,

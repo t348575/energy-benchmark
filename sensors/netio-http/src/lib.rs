@@ -78,7 +78,7 @@ impl Sensor for NetioHttp {
                  _|
                  -> std::pin::Pin<
                     Box<dyn Future<Output = Result<Vec<f64>, SensorError>> + Send>,
-                > { Box::pin(read_netio_http(s, args.clone())) },
+                > { Box::pin(read_netio_http(s, args)) },
             )
             .await
             {
@@ -133,7 +133,7 @@ struct Output {
 
 async fn read_netio_http(
     s: &InternalNetioHttp,
-    args: NetioHttpConfig,
+    args: &NetioHttpConfig,
 ) -> Result<Vec<f64>, SensorError> {
     let start = Instant::now();
     let client = Client::new();

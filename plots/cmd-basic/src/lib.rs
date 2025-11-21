@@ -1,16 +1,18 @@
 use std::path::{Path, PathBuf};
 
+use cmd::Cmd;
 use common::{
     bench::{BenchInfo, BenchParams},
     config::{Config, Settings},
     plot::{Plot, PlotType, collect_run_groups, ensure_dirs},
     util::{
-        BarChartKind, SectionStats, calculate_sectioned, make_power_state_bar_config,
+        BarChartKind, Filesystem, SectionStats, calculate_sectioned, make_power_state_bar_config,
         plot_bar_chart, power_energy_calculator, sysinfo_average_calculator,
     },
 };
 use eyre::{Context, Result, bail};
 use futures::future::join_all;
+use plot_common::impl_power_time_plot;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
 use tokio::fs::read_to_string;
@@ -88,7 +90,6 @@ impl Plot for CmdBasic {
                     &["Total"],
                     &[(0.0, settings.cpu_max_power_watts)],
                     power_energy_calculator,
-                    None,
                 )
                 .context("Calculate rapl means")
                 .unwrap();
@@ -98,7 +99,6 @@ impl Plot for CmdBasic {
                     &["Total"],
                     &[(0.0, bench_info.device_power_states[0].0)],
                     power_energy_calculator,
-                    None,
                 )
                 .context("Calculate powersensor3 means")
                 .unwrap();
@@ -109,7 +109,6 @@ impl Plot for CmdBasic {
                     &[r#"load-\S+"#],
                     &[(0.0, settings.cpu_max_power_watts * 2.0)],
                     power_energy_calculator,
-                    None,
                 )
                 .context("Calculate system power means")
                 .unwrap();
@@ -126,7 +125,6 @@ impl Plot for CmdBasic {
                         (0.0, f64::MAX),
                     ],
                     sysinfo_average_calculator,
-                    None,
                 )
                 .context("Calculate sysinfo means")
                 .unwrap();
@@ -256,3 +254,9 @@ impl CmdBasic {
         )
     }
 }
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct CmdPowerTime {
+    offset: Option<usize>,
+}
+impl_power_time_plot!(CmdPowerTime, Cmd, |_: &Cmd| "0", |_: &Cmd| Filesystem::Ext4);

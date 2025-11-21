@@ -6,7 +6,7 @@ use std::{
 use common::{
     bench::{BenchInfo, BenchParams},
     config::{Config, Settings},
-    plot::{HeatmapJob, Plot, PlotType, collect_run_groups, ensure_plot_dirs, render_heatmaps},
+    plot::{HeatmapJob, Plot, PlotType, collect_run_groups, ensure_dirs, render_heatmaps},
     util::{
         BarChartKind, Filesystem, SectionStats, calculate_sectioned, make_power_state_bar_config,
         parse_data_size, parse_trace, plot_bar_chart, plot_time_series, power_energy_calculator,
@@ -35,7 +35,7 @@ struct PlotEntry {
     args: Filebench,
     ssd_power: SectionedCalculation,
     cpu_power: SectionedCalculation,
-    _times: [usize; 3],
+    _times: [usize; 4],
 }
 
 #[async_trait::async_trait]
@@ -89,23 +89,21 @@ impl Plot for FilebenchBasic {
                 let rapl = rapl.context("Read rapl").unwrap();
                 let powersensor3 = powersensor3.context("Read powersensor3").unwrap();
 
-                let (rapl_means, rapl_overall, _) = calculate_sectioned::<_, 3>(
+                let (rapl_means, rapl_overall, _) = calculate_sectioned::<_, 4>(
                     Some(&markers),
                     &rapl,
                     &["Total"],
                     &[(0.0, settings.cpu_max_power_watts)],
                     power_energy_calculator,
-                    None,
                 )
                 .context("Calculate rapl means")
                 .unwrap();
-                let (powersensor3_means, ps3_overall, times) = calculate_sectioned::<_, 3>(
+                let (powersensor3_means, ps3_overall, times) = calculate_sectioned::<_, 4>(
                     Some(&markers),
                     &powersensor3,
                     &["Total"],
                     &[(0.0, bench_info.device_power_states[0].0)],
                     power_energy_calculator,
-                    None,
                 )
                 .context("Calculate powersensor3 means")
                 .unwrap();
@@ -145,7 +143,7 @@ impl Plot for FilebenchBasic {
             iops_dir.clone(),
             efficiency_dir.clone(),
         ];
-        ensure_plot_dirs(&dir_list).await?;
+        ensure_dirs(&dir_list).await?;
 
         let experiment_name = ready_entries[0].info.name.clone();
         let plot_jobs: Vec<(
@@ -579,7 +577,7 @@ impl Plot for FilebenchPowerTime {
         let dir = plot_path.join("filebench_time");
         let inner_dir = dir.join(&groups[0].info.name);
         let dir_list = vec![dir.clone(), inner_dir.clone(), inner_dir.join("plot_data")];
-        ensure_plot_dirs(&dir_list).await?;
+        ensure_dirs(&dir_list).await?;
 
         let results = groups
             .par_iter()
@@ -635,7 +633,7 @@ impl FilebenchPowerTime {
                 name,
                 bench_info,
             )
-            .with_offset(self.offset),
+            .with_offset(self.offset.unwrap_or_default()),
         )?;
         Ok(())
     }

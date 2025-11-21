@@ -1,9 +1,4 @@
-use std::{
-    cmp::min,
-    collections::HashMap,
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use common::{
     config::Settings,
@@ -14,12 +9,11 @@ use eyre::{Context, ContextCompat, Result};
 use flume::{Receiver, Sender};
 use sensor_common::SensorKind;
 use serde::{Deserialize, Serialize};
-use sysinfo::{MemoryRefreshKind, Pid, ProcessRefreshKind, System};
+use sysinfo::System;
 use tokio::{
     spawn,
     sync::Mutex,
     task::{JoinHandle, spawn_blocking},
-    time::sleep,
 };
 use tracing::error;
 
@@ -69,7 +63,7 @@ impl Sensor for Sysinfo {
                 args,
                 init_sysinfo,
                 |args: &SysinfoConfig,
-                 sensor: &Arc<Mutex<System>>,
+                 sensor: &mut Arc<Mutex<System>>,
                  request: &SensorRequest,
                  _|
                  -> std::pin::Pin<
@@ -77,7 +71,7 @@ impl Sensor for Sysinfo {
                 > {
                     match request {
                         SensorRequest::StartRecording { pid, .. } => {
-                            Box::pin(read_sysinfo(args.clone(), sensor.clone(), *pid))
+                            Box::pin(read_sysinfo(args, sensor.clone(), *pid))
                         }
                         _ => unreachable!(),
                     }
@@ -111,23 +105,17 @@ async fn init_sysinfo(_: SysinfoConfig) -> Result<(Arc<Mutex<System>>, Vec<Strin
         cpu_names
             .into_iter()
             .chain(load_names)
-            .chain([
-                "mem".to_owned(),
-                "bench-cpu".to_owned(),
-                "bench-mem".to_owned(),
-            ])
             .collect(),
     ))
 }
 
 async fn read_sysinfo(
-    config: SysinfoConfig,
+    config: &SysinfoConfig,
     sensor: Arc<Mutex<System>>,
-    pid: u32,
+    _: u32,
 ) -> Result<Vec<f64>, SensorError> {
-    let start = Instant::now();
-    let (cpu_freq, load, mem, fio_cpu, fio_mem) = spawn_blocking(move || {
-        let mut sys = sensor.blocking_lock();
+    let (cpu_freq, load) = spawn_blocking(move || {
+        let mut sys = sensor.blocking_lock_owned();
         sys.refresh_cpu_all();
         let cpu_freq = sys
             .cpus()
@@ -140,35 +128,18 @@ async fn read_sysinfo(
             .map(|cpu| cpu.cpu_usage())
             .collect::<Vec<_>>();
 
-        sys.refresh_memory_specifics(MemoryRefreshKind::nothing().with_ram());
-        let mem = sys.used_memory();
-
-        sys.refresh_processes_specifics(
-            sysinfo::ProcessesToUpdate::Some(&[Pid::from_u32(pid)]),
-            false,
-            ProcessRefreshKind::nothing().with_cpu().with_memory(),
-        );
-        let target_process = sys.process(Pid::from_u32(pid)).unwrap();
-        let target_process_cpu = target_process.cpu_usage();
-        let target_process_mem = target_process.memory();
-        drop(sys);
-        (cpu_freq, load, mem, target_process_cpu, target_process_mem)
+        (cpu_freq, load)
     })
     .await
     .context("Fetching sysinfo")
     .map_err(SensorError::MajorFailure)?;
 
-    sleep(Duration::from_micros(min(
-        (config.interval * 1000) - start.elapsed().as_micros() as u64,
-        config.interval * 1000,
-    )))
-    .await;
-    let mut readings = cpu_freq
+    async_io::Timer::after(Duration::from_millis(config.interval)).await;
+    let readings = cpu_freq
         .into_iter()
         .map(|x| x as f64)
         .chain(load.into_iter().map(|x| x as f64))
         .collect::<Vec<_>>();
-    readings.extend_from_slice(&[mem as f64, fio_cpu as f64, fio_mem as f64]);
     Ok(readings)
 }
 

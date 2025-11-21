@@ -57,6 +57,11 @@ if __name__ == "__main__":
     ax.set_xticks(x)
     ax.set_xticklabels(labels)
 
+    if spec.get("y_scale") is not None and spec["y_scale"] != "from_zero":
+        y_min = min(min(series) for series in data)
+        y_max = max(max(series) for series in data)
+        ax.set_ylim(y_min * 0.98, y_max * 1.02)
+
     rotation = spec.get("tick_rotation_deg")
     if rotation is not None:
         align = spec.get("tick_horizontal_align", "center")

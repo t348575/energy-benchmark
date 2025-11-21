@@ -145,7 +145,7 @@ pub trait Bench: Debug + DynClone + Downcast + Send + Sync {
 
         let mut cmd = Command::new(program);
         let cgroup_path = "/sys/fs/cgroup/energy-benchmark";
-        if let Some(cgroup_io) = &settings.cgroup_io {
+        if let Some(cgroup) = &settings.cgroup {
             _ = remove_dir(cgroup_path).await;
             create_dir_all(cgroup_path).await?;
             let device = settings
@@ -153,10 +153,10 @@ pub trait Bench: Debug + DynClone + Downcast + Send + Sync {
                 .strip_prefix("/dev/")
                 .context("Device does not include /dev")?;
             let device = read_to_string(format!("/sys/block/{device}/dev")).await?;
-            cgroup_io.apply(cgroup_path, device.trim()).await?;
+            cgroup.apply(cgroup_path, device.trim()).await?;
         }
 
-        if settings.cgroup_io.is_some() && !self.internal_cgroup() {
+        if settings.cgroup.is_some() && !self.internal_cgroup() {
             unsafe {
                 cmd.pre_exec(move || {
                     use std::io::Write;
@@ -232,7 +232,7 @@ pub trait Bench: Debug + DynClone + Downcast + Send + Sync {
         Ok(())
     }
 
-    /// Returns true if the benchmark performed write operations
+    /// Returns true if the benchmark will perform write operations
     /// This is used to determine if energy-benchmark should sleep based on [`Settings::sleep_after_writes`]
     fn write_hint(&self) -> bool;
 }

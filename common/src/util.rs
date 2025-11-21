@@ -27,7 +27,6 @@ use tokio::{
     },
     io::{self, AsyncReadExt, AsyncWriteExt},
     process::Command,
-    spawn,
 };
 use tracing::{debug, error, info, warn};
 
@@ -109,12 +108,12 @@ where
     Args: SensorArgs + Clone,
     SensorData: IntoIterator + Debug,
     SensorData::Item: ToString,
-    Sensor: Clone + Send + 'static,
+    Sensor: Send + 'static,
     InitSensor: Fn(Args) -> InitSensorFut,
     InitSensorFut: Future<Output = Result<(Sensor, Vec<String>)>> + Send + 'static,
     ReadSensorData: for<'a> Fn(
-        &Args,
-        &'a Sensor,
+        &'a Args,
+        &'a mut Sensor,
         &SensorRequest,
         Instant,
     ) -> Pin<
@@ -123,9 +122,9 @@ where
 {
     debug!("Spawning {} reader", args.name());
     let args_copy = args.clone();
-    let (s, sensor_names) = spawn(init(args_copy)).await??;
+    let (mut s, sensor_names) = init(args_copy).await?;
 
-    let mut readings = Vec::new();
+    let mut readings = Vec::with_capacity(45_000);
     let mut is_running = false;
     let mut dir = PathBuf::new();
     let mut req = SensorRequest::StopRecording;
@@ -168,7 +167,7 @@ where
             }
         } else {
             if error_count < 500 {
-                match read(&args, &s, &req, last_time).await {
+                match read(&args, &mut s, &req, last_time).await {
                     Ok(t) => readings.push((start_time.elapsed().as_millis(), t)),
                     Err(err) => match err {
                         SensorError::MajorFailure(err) => {
@@ -230,10 +229,143 @@ where
     Ok(())
 }
 
+pub fn blocking_sensor_reader<Args, Sensor, InitSensor, ReadSensorData, SensorData>(
+    rx: Receiver<SensorRequest>,
+    tx: Sender<SensorReply>,
+    filename: &str,
+    args: Args,
+    init: InitSensor,
+    read: ReadSensorData,
+) -> Result<()>
+where
+    Args: SensorArgs + Clone,
+    SensorData: IntoIterator + Debug,
+    SensorData::Item: ToString,
+    Sensor: Send + 'static,
+    InitSensor: Fn(Args) -> Result<(Sensor, Vec<String>)> + Send + 'static,
+    ReadSensorData: for<'a> Fn(
+        &'a Args,
+        &'a mut Sensor,
+        &SensorRequest,
+        Instant,
+    ) -> Result<SensorData, SensorError>,
+{
+    debug!("Spawning {} reader", args.name());
+    let args_copy = args.clone();
+    let (mut s, sensor_names) = init(args_copy)?;
+
+    let mut readings = Vec::with_capacity(45_000);
+    let mut is_running = false;
+    let mut dir = PathBuf::new();
+    let mut req = SensorRequest::StopRecording;
+    let mut start_time = Instant::now();
+    let mut read_time = Instant::now();
+    let mut last_time = Instant::now();
+    let mut error_count = 0;
+    loop {
+        if !is_running {
+            if let Ok(request) = rx.recv() {
+                match request {
+                    SensorRequest::StartRecording {
+                        dir: _dir,
+                        args: bench_args,
+                        program,
+                        pid,
+                        bench,
+                    } => {
+                        debug!("Starting {} reader", args.name());
+                        is_running = true;
+                        dir = _dir.clone();
+                        error_count = 0;
+
+                        req = SensorRequest::StartRecording {
+                            dir: _dir,
+                            args: bench_args,
+                            program,
+                            pid,
+                            bench,
+                        };
+                        start_time = Instant::now();
+                        read_time = Instant::now();
+                    }
+                    SensorRequest::Quit => break,
+                    SensorRequest::StopRecording => {
+                        is_running = false;
+                        warn!("Expected {} start request, got stop instead", args.name());
+                    }
+                }
+            }
+        } else {
+            if error_count < 500 {
+                match read(&args, &mut s, &req, last_time) {
+                    Ok(t) => readings.push((start_time.elapsed().as_millis(), t)),
+                    Err(err) => match err {
+                        SensorError::MajorFailure(err) => {
+                            error_count += 1;
+                            error!(
+                                "Error collecting sensor data for {} {:#?}",
+                                args.name(),
+                                err
+                            )
+                        }
+                        SensorError::NoChanges => {}
+                    },
+                }
+            }
+            last_time = read_time;
+            read_time = Instant::now();
+
+            if !rx.is_empty()
+                && let Ok(request) = rx.recv()
+            {
+                match request {
+                    SensorRequest::StopRecording => {
+                        use std::io::Write;
+                        debug!("Stopping {} reader", args.name());
+                        is_running = false;
+                        let filename = dir.join(filename);
+                        let mut file = std::fs::File::create(filename)?;
+
+                        file.write_all(format!("time,{}\n", sensor_names.join(",")).as_bytes())?;
+                        for row in readings.drain(..) {
+                            file.write_all(
+                                format!(
+                                    "{},{}\n",
+                                    row.0,
+                                    row.1
+                                        .into_iter()
+                                        .map(|x| x.to_string())
+                                        .collect::<Vec<_>>()
+                                        .join(",")
+                                )
+                                .as_bytes(),
+                            )?;
+                        }
+                        file.flush()?;
+                        tx.send(SensorReply::FileDumpComplete)?;
+                    }
+                    request => {
+                        warn!(
+                            "Got unexpected sensor request {request:#?} for {}",
+                            args.name()
+                        );
+                    }
+                }
+            }
+        }
+    }
+    debug!("Exiting reader for {}", args.name());
+    Ok(())
+}
+
 pub fn plot_python<V>(plot_file: impl AsRef<str>, args: &[(V, V)]) -> Result<()>
 where
     V: AsRef<str>,
 {
+    let only_process = std::env::var("ONLY_PROCESS").unwrap_or("0".to_owned());
+    if only_process == "1" {
+        return Ok(());
+    }
     debug!(
         "python plots/{}.py {}",
         plot_file.as_ref(),
@@ -295,6 +427,7 @@ pub struct BarChartConfig {
     pub tick_rotation_deg: Option<f64>,
     pub tick_horizontal_align: Option<String>,
     pub bar_width: Option<f64>,
+    pub y_scale: Option<String>,
 }
 
 impl BarChartConfig {
@@ -311,6 +444,7 @@ impl BarChartConfig {
             tick_rotation_deg: None,
             tick_horizontal_align: None,
             bar_width: None,
+            y_scale: None,
         }
     }
 }
@@ -367,7 +501,7 @@ pub fn make_power_state_bar_config(
                 "Latency (ms)",
             )
         }
-        BarChartKind::Power | BarChartKind::NormalizedPower => {
+        BarChartKind::Power => {
             let title = match clean_prefix {
                 Some(prefix) => format!("{} power vs. {}", prefix, x_label.to_lowercase()),
                 None => format!("Power vs. {}", x_label.to_lowercase()),
@@ -375,6 +509,23 @@ pub fn make_power_state_bar_config(
             let mut config = BarChartConfig::new(title, x_label.to_owned(), "Power (Watts)");
             config.tick_rotation_deg = Some(45.0);
             config.tick_horizontal_align = Some("right".to_owned());
+            config
+        }
+        BarChartKind::NormalizedPower => {
+            let title = match clean_prefix {
+                Some(prefix) => {
+                    format!("{} power increase % vs. {}", prefix, x_label.to_lowercase())
+                }
+                None => format!("Power vs. {}", x_label.to_lowercase()),
+            };
+            let mut config = BarChartConfig::new(
+                title,
+                x_label.to_owned(),
+                "Power (W) percentage increase (%)",
+            );
+            config.tick_rotation_deg = Some(45.0);
+            config.tick_horizontal_align = Some("right".to_owned());
+            config.y_scale = Some("not_from_zero".to_owned());
             config
         }
         BarChartKind::Freq => {
@@ -622,18 +773,18 @@ impl TimeSeriesSpec {
         }
     }
 
-    pub fn with_offset(mut self, offset: Option<usize>) -> Self {
-        self.offset = offset;
+    pub fn with_offset(mut self, offset: usize) -> Self {
+        self.offset.replace(offset);
         self
     }
 
-    pub fn with_trim_end(mut self, trim_end: Option<usize>) -> Self {
-        self.trim_end = trim_end;
+    pub fn with_trim_end(mut self, trim_end: usize) -> Self {
+        self.trim_end.replace(trim_end);
         self
     }
 
-    pub fn with_width(mut self, width: Option<usize>) -> Self {
-        self.width = width;
+    pub fn with_width(mut self, width: usize) -> Self {
+        self.width.replace(width);
         self
     }
 
@@ -814,8 +965,8 @@ pub fn calculate_sectioned<CalculatedData: Debug + Default + Copy, const N: usiz
     columns: &[&str],
     limits: &[(f64, f64)],
     calculator: fn(data: &[(usize, Vec<f64>)]) -> CalculatedData,
-    runtime: Option<usize>,
 ) -> Result<([CalculatedData; N], CalculatedData, [usize; N])> {
+    assert_eq!(columns.len(), limits.len());
     let markers = match marker_csv {
         Some(marker_csv) => {
             let mut marker_reader = ReaderBuilder::new()
@@ -823,8 +974,8 @@ pub fn calculate_sectioned<CalculatedData: Debug + Default + Copy, const N: usiz
                 .from_reader(marker_csv.as_bytes());
             let markers: Vec<Marker> = marker_reader.deserialize().collect::<Result<_, _>>()?;
             let markers = markers.into_iter().map(|x| x.time).collect::<Vec<_>>();
-            if markers.len() != N {
-                bail!("Expected {} markers, got {}", N, markers.len());
+            if markers.len() != N - 1 {
+                bail!("Expected {} markers, got {}", N - 1, markers.len());
             }
             markers
         }
@@ -856,24 +1007,18 @@ pub fn calculate_sectioned<CalculatedData: Debug + Default + Copy, const N: usiz
         );
     }
 
-    let time_idx = headers.iter().position(|h| h == "time");
-    if time_idx.is_none() {
-        assert_eq!(N, 0);
-        assert!(runtime.is_some());
-        return old_csv_format(col_indexes, limits, runtime.unwrap(), calculator, records);
-    }
-    let time_idx = time_idx.unwrap();
+    let time_idx = headers.iter().position(|h| h == "time").unwrap();
 
     let parse = |rec: &StringRecord| -> Option<(usize, Vec<f64>)> {
         let time = rec.get(time_idx)?.parse().ok()?;
         let values = col_indexes
-            .par_iter()
+            .iter()
             .filter_map(|col_idx| {
                 let val = rec.get(col_idx.1)?;
                 let val = val.parse::<f64>().ok()?;
                 if val.is_nan()
                     || !val.is_finite()
-                    || (val < limits[col_idx.0].0 && val > limits[col_idx.0].1)
+                    || (val < limits[col_idx.0].0 || val > limits[col_idx.0].1)
                 {
                     None
                 } else {
@@ -902,6 +1047,17 @@ pub fn calculate_sectioned<CalculatedData: Debug + Default + Copy, const N: usiz
         prev = *bound;
         stats[i] = calculator(&section_data);
         markers_final[i] = *bound;
+    }
+
+    if let Some(last_marker) = markers.last() {
+        let tail_data: Vec<_> = data
+            .iter()
+            .filter(|&&(t, _)| t >= *last_marker)
+            .cloned()
+            .collect();
+
+        stats[N - 1] = calculator(&tail_data);
+        markers_final[N - 1] = data.last().map(|(t, _)| *t).unwrap_or(prev);
     }
 
     let overall = calculator(&data);
@@ -1027,7 +1183,10 @@ pub struct SectionStats {
 
 pub fn power_energy_calculator(data: &[(usize, Vec<f64>)]) -> SectionStats {
     let count = data.len();
-    let sum = data.par_iter().map(|(_, v)| v[0]).sum::<f64>();
+    let sum = data
+        .par_iter()
+        .map(|(_, v)| v.iter().sum::<f64>())
+        .sum::<f64>();
     let mean = if count > 0 {
         Some(sum / count as f64)
     } else {
@@ -1161,44 +1320,6 @@ pub fn get_pcie_address(dev: &str) -> Option<String> {
     None
 }
 
-fn old_csv_format<CalculatedData: Debug + Default + Copy, const N: usize>(
-    col_indexes: Vec<(usize, usize)>,
-    limits: &[(f64, f64)],
-    runtime: usize,
-    calculator: fn(data: &[(usize, Vec<f64>)]) -> CalculatedData,
-    records: Vec<StringRecord>,
-) -> Result<([CalculatedData; N], CalculatedData, [usize; N])> {
-    let spacing = runtime as f64 / records.len() as f64;
-    let parse = |item: (usize, &StringRecord)| -> Option<(usize, Vec<f64>)> {
-        let (row_idx, rec) = item;
-        let values = col_indexes
-            .iter()
-            .filter_map(|col_idx| {
-                let val = rec.get(col_idx.1)?;
-                let val = val.parse::<f64>().ok()?;
-                if val.is_nan()
-                    || !val.is_finite()
-                    || (val < limits[col_idx.0].0 && val > limits[col_idx.0].1)
-                {
-                    None
-                } else {
-                    Some(val)
-                }
-            })
-            .collect::<Vec<f64>>();
-
-        if values.len() < col_indexes.len() {
-            return None;
-        }
-
-        Some(((row_idx as f64 * spacing).round() as usize, values))
-    };
-
-    let data: Vec<(usize, Vec<f64>)> = records.iter().enumerate().filter_map(parse).collect();
-    let overall = calculator(&data);
-    Ok(([CalculatedData::default(); N], overall, [0; N]))
-}
-
 pub async fn get_cpu_topology() -> Result<HashMap<u32, u32>> {
     let mut topology = HashMap::new();
     let mut dir = tokio::fs::read_dir("/sys/devices/system/cpu/").await?;
@@ -1242,7 +1363,7 @@ pub async fn clean_directory_except_prefill<P: AsRef<Path>>(dir: P) -> io::Resul
     while let Some(entry) = entries.next_entry().await? {
         let path = entry.path();
 
-        if path.file_name().is_some_and(|name| name == "prefill.data") {
+        if path.file_name().is_some_and(|name| name == "prefill") {
             continue;
         }
 

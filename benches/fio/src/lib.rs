@@ -4,15 +4,15 @@ use common::{
     bench::{Bench, BenchArgs, Cmd, CmdsResult},
     config::{Config, Settings},
     util::{
-        get_pcie_address, parse_time, read_json_file, simple_command_with_output,
-        simple_command_with_output_no_dir,
+        Filesystem, get_pcie_address, mount_fs, parse_time, read_json_file,
+        simple_command_with_output, simple_command_with_output_no_dir,
     },
 };
 use eyre::{ContextCompat, Result, bail};
 use itertools::iproduct;
 use serde::{Deserialize, Serialize};
 use tokio::fs::{read_to_string, write};
-use tracing::debug;
+use tracing::{debug, info};
 
 pub mod result;
 
@@ -29,6 +29,11 @@ pub struct Fio {
     pub size: Option<String>,
     pub num_jobs: Option<Vec<usize>>,
     pub extra_options: Option<Vec<Vec<String>>>,
+    pub job_specific_extra_options: Option<Vec<Vec<String>>>,
+    pub job_specific_extra_options_index: Option<usize>,
+    pub fs: Option<Filesystem>,
+    pub skip_format: Option<bool>,
+    pub filename: Option<String>
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -119,16 +124,34 @@ impl Bench for Fio {
             bail!("Missing SPDK path");
         }
 
+        let spdk = self.io_engines.iter().any(|x| x.eq(&"spdk"));
+        let program = if settings.numa.is_some() && !spdk {
+            "numactl".to_owned()
+        } else {
+            bench_args.program.clone().unwrap_or("fio".to_owned())
+        };
+
         let jobs = self.num_jobs.clone();
         let jobs_vec = jobs.unwrap_or(vec![1]);
+        if let Some(specific) = &self.job_specific_extra_options {
+            if jobs_vec[0] != specific.len() {
+                bail!(
+                    "Number of jobs does not match number of job specific extra options, {} != {}",
+                    jobs_vec[0],
+                    specific.len()
+                );
+            }
+        }
+
         let extra_options = self.extra_options.clone();
         let extra_options_vec = extra_options.unwrap_or(vec![vec!["--unit_base=0".to_owned()]]);
+        let filename = self.filename.clone().unwrap_or(settings.device.clone());
         let cmds = iproduct!(
             self.request_sizes.iter(),
             self.io_engines.iter(),
             self.io_depths.iter(),
             jobs_vec.into_iter(),
-            extra_options_vec.into_iter()
+            extra_options_vec.clone().into_iter(),
         )
         .map(|(req, eng, depth, job, extra_options)| Fio {
             test_type: self.test_type.clone(),
@@ -142,21 +165,35 @@ impl Bench for Fio {
             size: self.size.clone(),
             extra_options: Some(vec![extra_options]),
             num_jobs: Some(vec![job]),
+            job_specific_extra_options: self.job_specific_extra_options.clone(),
+            job_specific_extra_options_index: self.job_specific_extra_options_index.clone(),
+            fs: self.fs.clone(),
+            skip_format: self.skip_format,
+            filename: Some(filename.clone()),
         })
         .enumerate()
         .map(|(idx, bench)| {
-            let device = if bench.io_engines[0].eq("spdk") {
+            let filename = if bench.io_engines[0].eq("spdk") {
                 let pcie_address = get_pcie_address(&settings.device)
                     .context("Get drive PCIe address")
-                    .unwrap()
+                    .unwrap_or("00:00.0".to_owned())
                     .replace(":", ".");
                 format!("trtype=PCIe traddr={pcie_address} ns=1")
             } else {
-                settings.device.clone()
+                bench.filename.clone().unwrap()
             };
 
-            let mut args = vec![
-                "--name",
+            let mut args = if !spdk && let Some(numa) = &settings.numa {
+                vec![
+                    format!("--cpunodebind={}", numa.cpunodebind),
+                    format!("--membind={}", numa.membind),
+                    bench_args.program.clone().unwrap_or("fio".to_owned()),
+                ]
+            } else {
+                Vec::new()
+            };
+
+            let temp = vec![
                 "--filename",
                 "--direct",
                 "--bs",
@@ -166,17 +203,16 @@ impl Bench for Fio {
             ]
             .into_iter()
             .zip(vec![
-                name.to_owned(),
-                device.clone(),
+                filename,
                 int(bench.direct).to_string(),
                 bench.request_sizes[0].clone(),
                 bench.io_engines[0].clone(),
                 int(bench.time_based).to_string(),
                 bench.io_depths[0].to_string(),
             ])
-            .map(|(arg, value)| format!("{arg}={value}"))
-            .collect::<Vec<_>>();
+            .map(|(arg, value)| format!("{arg}={value}"));
 
+            args.extend(temp);
             args.push("--output-format=json+".to_owned());
 
             let log_avg = bench_args.log_avg.unwrap_or(10);
@@ -192,9 +228,7 @@ impl Bench for Fio {
             if let Some(ramp_time) = &bench.ramp_time {
                 args.push(format!("--ramp_time={ramp_time}"));
             }
-            if let Some(jobs) = &bench.num_jobs {
-                args.push(format!("--numjobs={}", jobs[0]));
-            }
+
             bench
                 .test_type
                 .cmds(settings)
@@ -207,13 +241,39 @@ impl Bench for Fio {
                 }
             }
 
-            if let Some(numa) = &settings.numa {
+            if settings.cgroup.is_some() {
+                args.push("--cgroup=energy-benchmark".to_owned());
+            }
+
+            if spdk && let Some(numa) = &settings.numa {
                 args.push(format!("--numa_cpu_nodes={}", numa.cpunodebind));
                 args.push(format!("--numa_mem_policy={}", numa.membind));
             }
 
-            if settings.cgroup_io.is_some() {
-                args.push("--cgroup=energy-benchmark".to_owned());
+            if let Some(jobs) = &bench.num_jobs
+                && bench.job_specific_extra_options.is_none()
+            {
+                args.push(format!("--numjobs={}", jobs[0]));
+                args.push(format!("--name={name}"));
+            } else if let Some(num_jobs) = &bench.num_jobs
+                && let Some(specific) = &bench.job_specific_extra_options
+            {
+                let job_specific_extra_options_index =
+                    bench.job_specific_extra_options_index.unwrap_or(0);
+                let extra_opts = bench.extra_options.as_ref().unwrap()[0].join(" ");
+                let extra_options_index = extra_options_vec
+                    .iter()
+                    .position(|x| x.join(" ").eq(&extra_opts))
+                    .unwrap();
+
+                for idx in 0..num_jobs[0] {
+                    args.push(format!("--name={name}"));
+                    if extra_options_index == job_specific_extra_options_index {
+                        for option in specific[idx].iter() {
+                            args.push(option.clone());
+                        }
+                    }
+                }
             }
 
             Cmd {
@@ -224,18 +284,13 @@ impl Bench for Fio {
         })
         .collect();
 
-        Ok(CmdsResult {
-            program: bench_args.program.clone().unwrap_or("fio".to_owned()),
-            cmds,
-        })
+        Ok(CmdsResult { program, cmds })
     }
 
     fn add_path_args(&self, args: &mut Vec<String>, final_results_dir: &Path) {
         let final_path_str = final_results_dir.to_str().unwrap();
         args.push(format!("--output={final_path_str}/results.json"));
         args.push(format!("--write_bw_log={final_path_str}/log"));
-        args.push(format!("--write_iops_log={final_path_str}/log"));
-        args.push(format!("--write_lat_log={final_path_str}/log"));
     }
 
     fn add_env(&self, bench_args: &dyn BenchArgs) -> Result<HashMap<String, String>> {
@@ -274,32 +329,53 @@ impl Bench for Fio {
         _data_dir: &Path,
         settings: &Settings,
         bench_args: &dyn BenchArgs,
-        _last_experiment: &Option<Box<dyn Bench>>,
+        last_experiment: &Option<Box<dyn Bench>>,
         _config: &Config,
         _final_results_dir: &Path,
     ) -> Result<()> {
-        if self.io_engines[0].ne("spdk") {
+        if self.io_engines[0] == "spdk" {
+            if self.fs.is_some() {
+                bail!("Filesystem not supported for SPDK");
+            }
+
+            let args = bench_args.downcast_ref::<FioConfig>().unwrap();
+            let spdk_dir = args.spdk_path.as_ref().context("Missing SPDK path")?;
+            let spdk_dir = Path::new(spdk_dir);
+            let pcie_device =
+                get_pcie_address(&settings.device).context("Get drive PCIe address")?;
+            write("spdk_device", &pcie_device).await?;
+            let mut env = HashMap::from([("PCI_ALLOWED".to_owned(), pcie_device)]);
+
+            if let Some(numa) = &settings.numa {
+                env.insert(
+                    "HUGENODE".to_owned(),
+                    format!("'nodes_hp[{}]=4096", numa.cpunodebind),
+                );
+            } else {
+                env.insert("HUGEMEM".to_owned(), "4096".to_owned());
+            }
+
+            simple_command_with_output("bash", &["./scripts/setup.sh", "config"], spdk_dir, &env)
+                .await?;
             return Ok(());
         }
 
-        let args = bench_args.downcast_ref::<FioConfig>().unwrap();
-        let spdk_dir = args.spdk_path.as_ref().context("Missing SPDK path")?;
-        let spdk_dir = Path::new(spdk_dir);
-        let pcie_device = get_pcie_address(&settings.device).context("Get drive PCIe address")?;
-        write("spdk_device", &pcie_device).await?;
-        let mut env = HashMap::from([("PCI_ALLOWED".to_owned(), pcie_device)]);
+        let mountpoint = std::env::current_dir()?.join("mountpoint");
+        if let Some(fs) = &self.fs {
+            let skip_format = self.skip_format.unwrap_or(false);
+            let should_format =
+                !skip_format && !last_experiment_uses_same_fs(last_experiment, &fs)?;
 
-        if let Some(numa) = &settings.numa {
-            env.insert(
-                "HUGENODE".to_owned(),
-                format!("'nodes_hp[{}]=4096", numa.cpunodebind),
-            );
-        } else {
-            env.insert("HUGEMEM".to_owned(), "4096".to_owned());
-        }
-
-        simple_command_with_output("bash", &["./scripts/setup.sh", "config"], spdk_dir, &env)
+            info!("Formatting: {should_format}");
+            mount_fs(
+                &mountpoint,
+                &settings.device,
+                fs,
+                should_format,
+                None::<String>,
+            )
             .await?;
+        }
         Ok(())
     }
 
@@ -307,33 +383,58 @@ impl Bench for Fio {
         &self,
         _data_dir: &Path,
         final_results_dir: &Path,
-        _settings: &Settings,
+        settings: &Settings,
         bench_args: &dyn BenchArgs,
     ) -> Result<()> {
         let results: result::FioResult =
             read_json_file(final_results_dir.join("results.json")).await?;
+        let runtime = results.jobs[0].job_runtime as f64 / 1000.0;
         debug!(
             "bw_mean: ({}, {})",
-            results.jobs[0].read.bw_mean, results.jobs[0].write.bw_mean
+            ((results.jobs.iter().map(|x| x.read.io_bytes).sum::<i64>() as f64) / 1048576.0)
+                / runtime,
+            ((results.jobs.iter().map(|x| x.write.io_bytes).sum::<i64>() as f64) / 1048576.0)
+                / runtime
         );
 
-        if self.io_engines[0].ne("spdk") {
+        if self.io_engines[0] == "spdk" {
+            let args = bench_args.downcast_ref::<FioConfig>().unwrap();
+            let spdk_dir = args.spdk_path.as_ref().context("Missing SPDK path")?;
+            let spdk_dir = Path::new(spdk_dir);
+            let pcie_device = read_to_string("spdk_device").await?;
+            simple_command_with_output(
+                "bash",
+                &["./scripts/setup.sh", "reset"],
+                spdk_dir,
+                &HashMap::from([("PCI_ALLOWED".to_owned(), pcie_device.trim().to_owned())]),
+            )
+            .await?;
             return Ok(());
         }
 
-        let args = bench_args.downcast_ref::<FioConfig>().unwrap();
-        let spdk_dir = args.spdk_path.as_ref().context("Missing SPDK path")?;
-        let spdk_dir = Path::new(spdk_dir);
-        let pcie_device = read_to_string("spdk_device").await?;
-        simple_command_with_output(
-            "bash",
-            &["./scripts/setup.sh", "reset"],
-            spdk_dir,
-            &HashMap::from([("PCI_ALLOWED".to_owned(), pcie_device.trim().to_owned())]),
-        )
-        .await?;
+        if self.fs.is_some() {
+            _ = simple_command_with_output_no_dir("umount", &[&settings.device]).await?;
+        }
         Ok(())
     }
+}
+
+fn last_experiment_uses_same_fs(
+    last_experiment: &Option<Box<dyn Bench>>,
+    current_fs: &Filesystem,
+) -> Result<bool> {
+    if let Some(last_experiment) = last_experiment {
+        let last_experiment = last_experiment
+            .downcast_ref::<Fio>()
+            .context("Invalid bench args, expected args for Fio")?;
+
+        if last_experiment.fs.is_none() {
+            return Ok(false);
+        }
+
+        return Ok(last_experiment.fs.as_ref().unwrap() == current_fs);
+    }
+    Ok(false)
 }
 
 impl Fio {
@@ -350,19 +451,24 @@ impl Fio {
         debug!("Creating prefill file");
         let fio = Fio {
             test_type: FioTestTypeConfig {
-                _type: FioTestType::Write,
+                _type: FioTestType::Randwrite,
                 args: None,
             },
-            request_sizes: vec!["4M".to_owned()],
+            request_sizes: vec!["4k".to_owned()],
             io_engines: vec!["io_uring".to_owned()],
-            io_depths: vec![256],
+            io_depths: vec![32],
+            num_jobs: Some(vec![20]),
             direct: true,
             time_based: false,
             runtime: None,
             ramp_time: None,
             size: Some(size.to_owned()),
             extra_options: None,
-            num_jobs: None,
+            job_specific_extra_options: None,
+            job_specific_extra_options_index: None,
+            fs: None,
+            skip_format: None,
+            filename: None,
         };
 
         let bench_args: Box<dyn BenchArgs> = 'outer: {

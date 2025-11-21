@@ -18,7 +18,7 @@ use itertools::iproduct;
 use result::{FilebenchSummary, parse_output};
 use serde::{Deserialize, Serialize};
 use tokio::{
-    fs::{File, write},
+    fs::{File, OpenOptions, write},
     io::{AsyncReadExt, AsyncWriteExt},
     join,
     process::Command,
@@ -38,6 +38,7 @@ pub struct Filebench {
     pub fs: Vec<Filesystem>,
     #[cfg(feature = "prefill")]
     pub prefill: Option<String>,
+    pub skip_format: Option<bool>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -74,6 +75,16 @@ impl Bench for Filebench {
         Ok(f * vars * runtime)
     }
 
+    fn write_hint(&self) -> bool {
+        let contents = std::fs::read_to_string(format!(
+            "/usr/local/share/filebench/workloads/{}.f",
+            self.job_file
+        ))
+        .context(format!("Could not open job file {}", self.job_file))
+        .unwrap();
+        contents.to_lowercase().contains("write")
+    }
+
     fn cmds(
         &self,
         settings: &Settings,
@@ -101,6 +112,7 @@ impl Bench for Filebench {
                 fs: vec![fs],
                 #[cfg(feature = "prefill")]
                 prefill: self.prefill.clone(),
+                skip_format: self.skip_format,
             })
             .enumerate()
             .map(|(idx, bench)| {
@@ -114,16 +126,6 @@ impl Bench for Filebench {
                     ]);
                 }
 
-                let mut hash_args = args.clone();
-                hash_args.push(self.job_file.clone());
-                hash_args.extend(
-                    bench.vars.as_ref().unwrap()[0]
-                        .iter()
-                        .map(|x| format!("{}={}", x.0, x.1)),
-                );
-                hash_args.push(format!("{:?}", bench.fs[0]));
-                hash_args.push(bench.runtime.to_string());
-
                 Cmd {
                     args,
                     idx,
@@ -135,32 +137,29 @@ impl Bench for Filebench {
         Ok(CmdsResult { program, cmds })
     }
 
-    async fn run(
+    async fn experiment_init(
         &self,
-        program: &str,
-        args: &[String],
-        _env: &HashMap<String, String>,
+        _data_dir: &Path,
         settings: &Settings,
-        sensors: &[Sender<SensorRequest>],
-        final_results_dir: &Path,
-        bench_obj: Box<dyn Bench>,
-        config: &Config,
+        _bench_args: &dyn BenchArgs,
         last_experiment: &Option<Box<dyn Bench>>,
+        _config: &Config,
+        final_results_dir: &Path,
     ) -> Result<()> {
-        let filebench_mount = final_results_dir.join("filebench-mount");
-
         let marker_filename = final_results_dir.join("markers.csv");
         let mut marker_file = File::create(marker_filename).await?;
         marker_file
             .write_all("time,marker_name\n".as_bytes())
             .await?;
 
-        let filebench_mount_str = filebench_mount.to_str().unwrap();
+        let mountpoint = std::env::current_dir()?.join("mountpoint");
 
-        let should_format =
-            !self.fs.is_empty() && !last_experiment_uses_same_fs(last_experiment, &self.fs[0])?;
+        let skip_format = self.skip_format.unwrap_or(false);
+        let should_format = !skip_format
+            && !self.fs.is_empty()
+            && !last_experiment_uses_same_fs(last_experiment, &self.fs[0])?;
         mount_fs(
-            &filebench_mount,
+            &mountpoint,
             &settings.device,
             &self.fs[0],
             should_format,
@@ -170,9 +169,35 @@ impl Bench for Filebench {
 
         #[cfg(feature = "prefill")]
         if let Some(size) = &self.prefill {
-            let prefill_file = filebench_mount.join("prefill.data");
-            fio::Fio::prefill(&prefill_file, size, config, settings).await?;
+            let prefill_file = mountpoint.join("prefill");
+            fio::Fio::prefill(&prefill_file, size, _config, settings).await?;
         }
+        Ok(())
+    }
+
+    async fn run(
+        &self,
+        program: &str,
+        args: &[String],
+        _env: &HashMap<String, String>,
+        settings: &Settings,
+        sensors: &[Sender<SensorRequest>],
+        final_results_dir: &Path,
+        bench_obj: Box<dyn Bench>,
+        _config: &Config,
+        _last_experiment: &Option<Box<dyn Bench>>,
+    ) -> Result<()> {
+        let mountpoint = std::env::current_dir()?.join("mountpoint");
+
+        let marker_filename = final_results_dir.join("markers.csv");
+        let mut marker_file = OpenOptions::new()
+            .write(true)
+            .append(true)
+            .open(marker_filename)
+            .await?;
+        marker_file
+            .write_all("time,marker_name\n".as_bytes())
+            .await?;
 
         let mut filebench = Command::new(program)
             .args(args)
@@ -199,13 +224,14 @@ impl Bench for Filebench {
         send_filebench_cmd(&mut stdin, &mut stdout, &format!("load {}", self.job_file)).await?;
 
         for (k, v) in self.vars.as_ref().unwrap()[0].iter() {
+            debug!("Setting {k}={v}");
             send_filebench_cmd(&mut stdin, &mut stdout, &format!("set ${k}={v}")).await?;
         }
 
         send_filebench_cmd(
             &mut stdin,
             &mut stdout,
-            &format!("set $dir={filebench_mount_str}"),
+            &format!("set $dir={}", mountpoint.to_str().unwrap()),
         )
         .await?;
         let start_time = Instant::now();
@@ -251,11 +277,7 @@ impl Bench for Filebench {
             )
             .await?;
 
-        stdin
-            .write_all(format!("run {}", self.runtime).as_bytes())
-            .await?;
-        stdin.write_all(b"\n").await?;
-        stdin.flush().await?;
+        send_filebench_cmd(&mut stdin, &mut stdout, &format!("run {}", self.runtime)).await?;
         let (stdout, stderr, exit_status) =
             join!(read_output(stdout), read_output(stderr), filebench.wait());
         let exit_status = exit_status?;

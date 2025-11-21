@@ -168,7 +168,7 @@ impl Bench for H5Bench {
 
         #[cfg(feature = "prefill")]
         if let Some(size) = &self.prefill {
-            let prefill_file = mountpoint.join("prefill.data");
+            let prefill_file = mountpoint.join("prefill");
             fio::Fio::prefill(&prefill_file, size, config, settings).await?;
         }
         Ok(())

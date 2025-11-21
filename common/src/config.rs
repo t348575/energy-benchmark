@@ -37,10 +37,25 @@ pub struct Settings {
     pub should_trace: Option<bool>,
     pub cpu_freq: Option<CpuFreq>,
     pub cpu_max_power_watts: f64,
-    pub cgroup_io: Option<CgroupIo>,
+    pub cgroup: Option<Cgroup>,
     pub sleep_between_experiments: Option<u64>,
     pub sleep_after_writes: Option<u64>,
+    pub scheduler: Option<String>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Cgroup {
+    pub io: CgroupIo,
+    pub cpuset: CgroupCpuSet
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CgroupCpuSet {
+    pub cpus: Option<Vec<CpuRange>>
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CpuRange(u32, Option<u32>);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CgroupIo {
@@ -145,6 +160,28 @@ impl OptionalRwIos {
             write!(&mut s, "{}={}", names.1, w)?;
         }
         Ok(s)
+    }
+}
+
+impl Cgroup {
+    pub async fn apply<P: AsRef<Path>, S: AsRef<str>>(&self, cg_path: P, device: S) -> Result<()> {
+        self.io.apply(&cg_path, device).await?;
+        self.cpuset.apply(cg_path).await
+    }
+}
+
+impl CgroupCpuSet {
+    pub async fn apply<P: AsRef<Path>>(&self, cg_path: P) -> Result<()> {
+        let base = cg_path.as_ref();
+        if let Some(cpus) = &self.cpus {
+            let cpu_str = cpus.iter().map(|x| if x.1.is_some() {
+                format!("{}-{}", x.0, x.1.as_ref().unwrap())
+            } else {
+                format!("{}", x.0)
+            }).collect::<Vec<_>>().join(",");
+            write_one_line(base.join("cpuset.cpus"), &cpu_str).await?;
+        }
+        Ok(())
     }
 }
 

@@ -15,8 +15,7 @@ mod ffi {
 }
 
 use std::{
-    cmp::min,
-    sync::{Arc, LazyLock},
+    sync::LazyLock,
     time::{Duration, Instant},
 };
 
@@ -31,7 +30,7 @@ use flume::{Receiver, Sender};
 use sensor_common::SensorKind;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tokio::{spawn, sync::Mutex, task::JoinHandle};
+use tokio::{spawn, task::JoinHandle};
 use tracing::{debug, error};
 
 #[derive(Error, Debug)]
@@ -124,12 +123,12 @@ impl Sensor for Powersensor3 {
                 args,
                 init_powersensor3,
                 |_: &Powersensor3Config,
-                 sensor: &Arc<Mutex<InternalPowersensor3>>,
+                 sensor: &mut InternalPowersensor3,
                  _,
                  last_time|
                  -> std::pin::Pin<
                     Box<dyn Future<Output = Result<Vec<f64>, SensorError>> + Send>,
-                > { Box::pin(read_powersensor3(sensor.clone(), last_time)) },
+                > { Box::pin(read_powersensor3(sensor, last_time)) },
             )
             .await
             {
@@ -144,31 +143,24 @@ impl Sensor for Powersensor3 {
 
 async fn init_powersensor3(
     args: Powersensor3Config,
-) -> Result<(Arc<Mutex<InternalPowersensor3>>, Vec<String>)> {
+) -> Result<(InternalPowersensor3, Vec<String>)> {
     let sensor = InternalPowersensor3::new(&args.device)?;
     let mut sensor_names = vec!["Total".to_owned()];
     sensor_names.push(sensor.get_sensor_name(1)?);
     sensor_names.push(sensor.get_sensor_name(2)?);
     debug!("Powersensor3 initialized");
-    Ok((Arc::new(Mutex::new(sensor)), sensor_names))
+    Ok((sensor, sensor_names))
 }
 
 async fn read_powersensor3(
-    sensor: Arc<Mutex<InternalPowersensor3>>,
-    last_time: Instant,
+    sensor: &InternalPowersensor3,
+    _: Instant,
 ) -> Result<Vec<f64>, SensorError> {
-    let sensor = sensor.lock().await;
-    let start_time = Instant::now();
     let start = sensor
         .read()
         .context("Read sensor")
         .map_err(SensorError::MajorFailure)?;
-    async_io::Timer::after(Duration::from_micros(min(
-        1000 - start_time.elapsed().as_micros() as u64
-            - (last_time.elapsed().as_micros() as u64).saturating_sub(1000),
-        1000,
-    )))
-    .await;
+    async_io::Timer::after(Duration::from_micros(1000)).await;
     let end = sensor
         .read()
         .context("Read sensor")

@@ -13,3 +13,4 @@ eyre.workspace = true
 tokio.workspace = true
 async-io.workspace = true
 sensor-common.workspace = true
+atoi.workspace = true

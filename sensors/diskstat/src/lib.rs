@@ -1,5 +1,6 @@
 use std::{
-    cmp::min,
+    fs::File,
+    os::unix::fs::FileExt,
     sync::{Arc, LazyLock},
     time::{Duration, Instant},
 };
@@ -13,13 +14,7 @@ use eyre::{Context, Result};
 use flume::{Receiver, Sender};
 use sensor_common::SensorKind;
 use serde::{Deserialize, Serialize};
-use tokio::{
-    fs::{File, read_to_string},
-    io::{AsyncReadExt, AsyncSeekExt},
-    spawn,
-    sync::Mutex,
-    task::JoinHandle,
-};
+use tokio::{fs::read_to_string, spawn, sync::Mutex, task::JoinHandle};
 use tracing::error;
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -57,11 +52,6 @@ struct InternalDiskStat {
 struct DiskStatData {
     read: u64,
     write: u64,
-    read_merges: u64,
-    write_merges: u64,
-    time_in_queue: u64,
-    read_ticks: u64,
-    write_ticks: u64,
 }
 
 const DISKSTAT_FILENAME: &str = "diskstat.csv";
@@ -91,7 +81,7 @@ impl Sensor for Diskstat {
                 InternalDiskStatConfig { device },
                 init_diskstat,
                 |_,
-                 sensor: &Arc<Mutex<InternalDiskStat>>,
+                 sensor,
                  _,
                  last_time|
                  -> std::pin::Pin<
@@ -117,7 +107,7 @@ async fn init_diskstat(
             .await?
             .trim()
             .parse()?;
-    let file = File::open(format!("/sys/block/{}/stat", config.device)).await?;
+    let file = File::open(format!("/sys/block/{}/stat", config.device))?;
     let mut diskstat = InternalDiskStat {
         file,
         hw_sector_size,
@@ -148,37 +138,52 @@ async fn init_diskstat(
 type ReadDiskResult = Result<Vec<f64>, SensorError>;
 async fn read_diskstat(sensor: Arc<Mutex<InternalDiskStat>>, last_time: Instant) -> ReadDiskResult {
     let mut sensor = sensor.lock().await;
-    let start_time = Instant::now();
     let readings = sensor.read(&last_time).await?;
-    async_io::Timer::after(Duration::from_micros(min(
-        10000
-            - start_time.elapsed().as_micros() as u64
-            - (last_time.elapsed().as_micros() as u64).saturating_sub(10000),
-        10000,
-    )))
-    .await;
-
+    async_io::Timer::after(Duration::from_micros(10000)).await;
     Ok(readings)
 }
 
 impl InternalDiskStat {
     async fn read(&mut self, prev_time: &Instant) -> ReadDiskResult {
-        let mut buf = String::new();
-        self.file
-            .seek(std::io::SeekFrom::Start(0))
-            .await
-            .context("Seek to start")
-            .map_err(SensorError::MajorFailure)?;
-        self.file
-            .read_to_string(&mut buf)
-            .await
-            .context("Read to string")
-            .map_err(SensorError::MajorFailure)?;
+        let mut buf = [0u8; 256];
+        let read = self
+            .file
+            .read_at(&mut buf, 0)
+            .context("Read stat file")
+            .map_err(|e| SensorError::MajorFailure(e))?;
 
-        let fields: Vec<u64> = buf.split_whitespace().map(|s| s.parse().unwrap()).collect();
+        let mut fields: [&[u8]; 17] = [&[]; 17];
+        let mut n = 0usize;
+        let mut i = 0usize;
+        let mut in_token = false;
 
-        let reads = fields[2];
-        let writes = fields[6];
+        while i < read {
+            let b = buf[i];
+            let is_ws = matches!(b, b' ' | b'\t' | b'\n' | b'\r');
+            if !is_ws && !in_token {
+                let start = i;
+                let mut j = i + 1;
+                while j < buf.len() {
+                    let c = buf[j];
+                    if matches!(c, b' ' | b'\t' | b'\n' | b'\r') {
+                        break;
+                    }
+                    j += 1;
+                }
+                if n < fields.len() {
+                    fields[n] = &buf[start..j];
+                    n += 1;
+                }
+                i = j;
+                in_token = false;
+            } else {
+                i += 1;
+            }
+        }
+
+        use atoi::FromRadix10;
+        let reads = u64::from_radix_10(fields[2]).0;
+        let writes = u64::from_radix_10(fields[6]).0;
         let readings = vec![
             reads as f64,
             writes as f64,
@@ -186,22 +191,17 @@ impl InternalDiskStat {
                 / prev_time.elapsed().as_secs_f64(),
             ((writes as f64 - self.prev.write as f64) * self.hw_sector_size as f64)
                 / prev_time.elapsed().as_secs_f64(),
-            fields[0] as f64,
-            fields[4] as f64,
-            fields[1] as f64,
-            fields[5] as f64,
-            fields[10] as f64,
-            fields[3] as f64,
-            fields[7] as f64,
+            u64::from_radix_10(fields[0]).0 as f64,
+            u64::from_radix_10(fields[4]).0 as f64,
+            u64::from_radix_10(fields[1]).0 as f64,
+            u64::from_radix_10(fields[5]).0 as f64,
+            u64::from_radix_10(fields[10]).0 as f64,
+            u64::from_radix_10(fields[3]).0 as f64,
+            u64::from_radix_10(fields[7]).0 as f64,
         ];
 
         self.prev.read = reads;
         self.prev.write = writes;
-        self.prev.read_merges = fields[2];
-        self.prev.write_merges = fields[3];
-        self.prev.time_in_queue = fields[4];
-        self.prev.read_ticks = fields[5];
-        self.prev.write_ticks = fields[6];
 
         Ok(readings)
     }

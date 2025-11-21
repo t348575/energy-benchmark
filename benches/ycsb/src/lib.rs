@@ -174,7 +174,7 @@ impl Bench for Ycsb {
 
         #[cfg(feature = "prefill")]
         if let Some(size) = &self.prefill {
-            let prefill_file = ycsb_mount.join("prefill.data");
+            let prefill_file = ycsb_mount.join("prefill");
             fio::Fio::prefill(&prefill_file, size, config, settings).await?;
         }
 

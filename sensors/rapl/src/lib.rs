@@ -1,26 +1,21 @@
 use std::{
-    cmp::min,
-    sync::{Arc, LazyLock},
+    fs::File,
+    os::unix::fs::FileExt,
+    sync::LazyLock,
     time::{Duration, Instant},
 };
 
 use common::{
     config::Settings,
     sensor::{Sensor, SensorArgs, SensorReply, SensorRequest},
-    util::{SensorError, TimeSeriesAxis, get_cpu_topology, sensor_reader},
+    util::{SensorError, TimeSeriesAxis, blocking_sensor_reader, get_cpu_topology},
 };
-use eyre::{Context, ContextCompat, Result};
+use eyre::{ContextCompat, Result};
 use flume::{Receiver, Sender};
 use sensor_common::SensorKind;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tokio::{
-    fs::File,
-    io::{AsyncReadExt, AsyncSeekExt},
-    spawn,
-    sync::Mutex,
-    task::JoinHandle,
-};
+use tokio::{runtime::Handle, spawn, task::JoinHandle};
 use tracing::{debug, error};
 
 #[derive(Error, Debug)]
@@ -41,9 +36,9 @@ struct InternalRapl {
 }
 
 impl InternalRapl {
-    async fn new() -> Result<Self, RaplError> {
-        let topology = get_cpu_topology()
-            .await
+    fn new() -> Result<Self, RaplError> {
+        let topology = 
+            Handle::current().block_on(get_cpu_topology())
             .map_err(|e| RaplError::CreationFailed(e.to_string()))?;
         let mut packages = topology.into_iter().map(|x| x.0).collect::<Vec<_>>();
         packages.sort();
@@ -56,34 +51,28 @@ impl InternalRapl {
             let cpu = File::open(format!(
                 "/sys/class/powercap/intel-rapl:{package}/energy_uj"
             ))
-            .await?;
+            .map_err(|e| RaplError::CreationFailed(e.to_string()))?;
             let dram = File::open(format!(
                 "/sys/class/powercap/intel-rapl:{package}:0/energy_uj"
             ))
-            .await?;
+            .map_err(|e| RaplError::CreationFailed(e.to_string()))?;
             files.push((cpu, dram));
         }
 
         Ok(Self { packages, files })
     }
 
-    async fn read(&mut self, results: &mut [(u64, u64)]) -> Result<()> {
-        for (idx, (cpu, dram)) in self.files.iter_mut().enumerate() {
-            let mut data = String::new();
-            cpu.seek(std::io::SeekFrom::Start(0)).await?;
-            cpu.read_to_string(&mut data).await?;
-            let cpu = data.trim().parse::<u64>()?;
-            data = String::new();
-            dram.seek(std::io::SeekFrom::Start(0)).await?;
-            dram.read_to_string(&mut data).await?;
-            let dram = data.trim().parse::<u64>()?;
-            results[idx] = (cpu, dram);
-        }
-        Ok(())
-    }
-
-    fn size(&self) -> usize {
-        self.files.len()
+    fn read(&self, result: &mut [(u64, u64)]) {
+        let mut buf_cpu = [0u8; 32];
+        let mut buf_dram = [0u8; 32];
+        self.files.iter().zip(result.iter_mut()).for_each(|(s, r)| {
+            use atoi::FromRadix10;
+            let cpu = s.0.read_at(&mut buf_cpu, 0).unwrap();
+            let dram = s.1.read_at(&mut buf_dram, 0).unwrap();
+            let cpu = u64::from_radix_10(&buf_cpu[0..cpu]).0;
+            let dram = u64::from_radix_10(&buf_dram[0..dram]).0;
+            *r = (cpu, dram)
+        });
     }
 
     fn watts(start: u64, end: u64, elapsed: u64) -> f64 {
@@ -129,21 +118,19 @@ impl Sensor for Rapl {
 
         let args = args.clone();
         let handle = spawn(async move {
-            if let Err(err) = sensor_reader(
+            if let Err(err) = blocking_sensor_reader(
                 rx,
                 tx,
                 RAPL_FILENAME,
                 args,
                 init_rapl,
-                |args: &RaplConfig,
-                 sensor: &Arc<Mutex<InternalRapl>>,
+                |args,
+                 sensor,
                  _,
                  last_time|
-                 -> std::pin::Pin<
-                    Box<dyn Future<Output = Result<Vec<f64>, SensorError>> + Send>,
-                > { Box::pin(read_rapl(args.clone(), sensor.clone(), last_time)) },
+                 -> Result<Vec<f64>, SensorError>
+                 { read_rapl(args, sensor, last_time) },
             )
-            .await
             {
                 error!("{err:#?}");
                 return Err(err);
@@ -154,8 +141,8 @@ impl Sensor for Rapl {
     }
 }
 
-async fn init_rapl(_: RaplConfig) -> Result<(Arc<Mutex<InternalRapl>>, Vec<String>)> {
-    let sensor = InternalRapl::new().await?;
+fn init_rapl(_: RaplConfig) -> Result<(InternalRapl, Vec<String>)> {
+    let sensor = InternalRapl::new()?;
     let mut sensor_names = sensor
         .packages
         .iter()
@@ -163,36 +150,21 @@ async fn init_rapl(_: RaplConfig) -> Result<(Arc<Mutex<InternalRapl>>, Vec<Strin
         .collect::<Vec<_>>();
     sensor_names.insert(0, "Total".to_owned());
     debug!("RAPL sensor initialized!");
-    Ok((Arc::new(Mutex::new(sensor)), sensor_names))
+    Ok((sensor, sensor_names))
 }
 
-async fn read_rapl(
-    _: RaplConfig,
-    sensor: Arc<Mutex<InternalRapl>>,
-    last_time: Instant,
+fn read_rapl(
+    _: &RaplConfig,
+    sensor: &mut InternalRapl,
+    _: Instant,
 ) -> Result<Vec<f64>, SensorError> {
-    let start_time = Instant::now();
-    let mut sensor = sensor.lock().await;
-    let mut start = vec![(0, 0); sensor.size()];
-    let mut end = vec![(0, 0); sensor.size()];
+    let mut start = vec![(0u64, 0u64); sensor.files.len()];
+    let mut end = vec![(0u64, 0u64); sensor.files.len()];
     let sensor_read_time = Instant::now();
-    sensor
-        .read(&mut start)
-        .await
-        .context("Read data")
-        .map_err(SensorError::MajorFailure)?;
-    async_io::Timer::after(Duration::from_micros(min(
-        1000 - start_time.elapsed().as_micros() as u64
-            - (last_time.elapsed().as_micros() as u64).saturating_sub(1000),
-        1000,
-    )))
-    .await;
+    sensor.read(&mut start);
+    std::thread::sleep(Duration::from_micros(1000));
+    sensor.read(&mut end);
     let sensor_end_time = sensor_read_time.elapsed().as_micros() as u64;
-    sensor
-        .read(&mut end)
-        .await
-        .context("Read data")
-        .map_err(SensorError::MajorFailure)?;
 
     let no_changes = start.iter().zip(end.iter()).any(|(x, y)| x.0 >= y.0);
     if no_changes {
@@ -200,8 +172,8 @@ async fn read_rapl(
     }
 
     let mut readings = start
-        .into_iter()
-        .zip(end)
+        .iter()
+        .zip(&end)
         .flat_map(|(start, end)| {
             [
                 InternalRapl::watts(start.0, end.0, sensor_end_time),

@@ -131,8 +131,36 @@ pub async fn run_benchmark(config_file: String, no_progress: bool, skip_plot: bo
         std::process::exit(0);
     });
 
-    let nvme_cli_device = strip_nvme_namespace(&config.settings.device);
+    let nvme_device_path = config
+        .settings
+        .device
+        .strip_prefix("/dev/")
+        .unwrap()
+        .to_string();
+    let scheduler = config
+        .settings
+        .scheduler
+        .clone()
+        .unwrap_or("none".to_owned());
+    write_one_line(
+        format!("/sys/block/{nvme_device_path}/queue/scheduler"),
+        &scheduler,
+    )
+    .await
+    .context("Set IO scheduler")?;
 
+    let max_hw_sectors = read_to_string(format!(
+        "/sys/block/{nvme_device_path}/queue/max_hw_sectors_kb"
+    ))
+    .await?;
+    write_one_line(
+        format!("/sys/block/{nvme_device_path}/queue/max_sectors_kb"),
+        &max_hw_sectors,
+    )
+    .await
+    .context("Set max sectors")?;
+
+    let nvme_cli_device = strip_nvme_namespace(&config.settings.device);
     let device_power_states = fetch_nvme_power_states(&nvme_cli_device)
         .await
         .context("Fetch NVMe power states")?;
@@ -276,6 +304,7 @@ pub async fn run_benchmark(config_file: String, no_progress: bool, skip_plot: bo
                             .collect::<Vec<_>>()
                             .join(", ")
                     );
+                    sleep(Duration::from_secs(1)).await;
                     let result = bench_obj
                         .run(
                             &program,

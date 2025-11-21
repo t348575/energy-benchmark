@@ -14,8 +14,7 @@ pub fn default_timeseries_plot(
     plot_path: PathBuf,
     data_path: PathBuf,
     name: String,
-    #[allow(unused_variables)]
-    bench_info: &BenchInfo,
+    #[allow(unused_variables)] bench_info: &BenchInfo,
 ) -> TimeSeriesSpec {
     let mut plots = Vec::new();
     let diskstat = if_sensor!(
@@ -67,7 +66,11 @@ pub fn default_timeseries_plot(
                 format!("{name}-cpu-freq"),
                 "System Info freq.",
                 TimeSeriesAxis::sensor_time(get_sensor(sysinfo).filename()),
-                if_sensor!("Sysinfo", sysinfo::sysinfo_freq_plot_axis(&bench_info.cpu_topology), Vec::new()),
+                if_sensor!(
+                    "Sysinfo",
+                    sysinfo::sysinfo_freq_plot_axis(&bench_info.cpu_topology),
+                    Vec::new()
+                ),
             )
             .with_secondary(diskstat.clone()),
         );
@@ -82,7 +85,11 @@ pub fn default_timeseries_plot(
                 format!("{name}-cpu-load"),
                 "System Info load",
                 TimeSeriesAxis::sensor_time(get_sensor(sysinfo).filename()),
-                if_sensor!("Sysinfo", sysinfo::sysinfo_load_plot_axis(&bench_info.cpu_topology), Vec::new()),
+                if_sensor!(
+                    "Sysinfo",
+                    sysinfo::sysinfo_load_plot_axis(&bench_info.cpu_topology),
+                    Vec::new()
+                ),
             )
             .with_secondary(diskstat),
         );
@@ -128,7 +135,6 @@ macro_rules! impl_power_time_plot {
                 _: &Settings,
                 completed_dirs: &mut Vec<String>,
             ) -> Result<()> {
-                use common::util::*;
                 if *plot_type == PlotType::Total {
                     return Ok(());
                 }
@@ -142,7 +148,7 @@ macro_rules! impl_power_time_plot {
                 let dir = plot_path.join(format!("{}_time", slug));
                 let inner_dir = dir.join(&groups[0].info.name);
                 let dir_list = vec![dir.clone(), inner_dir.clone(), inner_dir.join("plot_data")];
-                ensure_plot_dirs(&dir_list).await?;
+                common::plot::ensure_dirs(&dir_list).await?;
 
                 for group in &groups {
                     self.__power_time_impl(
@@ -164,7 +170,6 @@ macro_rules! impl_power_time_plot {
                 info: &BenchParams,
                 bench_info: &BenchInfo,
             ) -> Result<()> {
-                use common::util::*;
                 let config = info.args.downcast_ref::<$bench>().unwrap();
                 let extra = ($dir_accessor)(config);
                 let name = format!("{}-ps{}-{}", info.name, info.power_state, extra);
@@ -172,22 +177,22 @@ macro_rules! impl_power_time_plot {
                 let trace_file = data_path.join("trace.out");
                 if trace_file.exists() {
                     let fs = ($fs_accessor)(config);
-                    let trace = parse_trace(&std::fs::File::open(&trace_file)?, &fs)?;
-                    write_csv(
+                    let trace = common::util::parse_trace(&std::fs::File::open(&trace_file)?, &fs)?;
+                    common::util::write_csv(
                         &plot_path.join("plot_data").join(format!("{name}.csv")),
                         &trace,
                     )?;
                 }
 
-                plot_time_series(
-                    default_timeseries_plot(
+                common::util::plot_time_series(
+                    plot_common::default_timeseries_plot(
                         default_benches::BenchKind::$bench,
                         plot_path.to_path_buf(),
                         data_path,
                         name,
                         bench_info,
                     )
-                    .with_offset(self.offset),
+                    .with_offset(self.offset.unwrap_or(0)),
                 )?;
                 Ok(())
             }

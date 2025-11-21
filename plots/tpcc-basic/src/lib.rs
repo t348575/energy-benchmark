@@ -6,7 +6,7 @@ use std::{
 use common::{
     bench::{BenchInfo, BenchParams},
     config::{Config, Settings},
-    plot::{HeatmapJob, Plot, PlotType, collect_run_groups, ensure_plot_dirs, render_heatmaps},
+    plot::{HeatmapJob, Plot, PlotType, collect_run_groups, ensure_dirs, render_heatmaps},
     util::{
         BarChartKind, SectionStats, calculate_sectioned, make_power_state_bar_config,
         plot_bar_chart, power_energy_calculator, read_json_file,
@@ -15,7 +15,7 @@ use common::{
 use eyre::{Context, Result, bail};
 use futures::future::join_all;
 use itertools::Itertools;
-use plot_common::{default_timeseries_plot, impl_power_time_plot};
+use plot_common::impl_power_time_plot;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
 use tokio::fs::read_to_string;
@@ -125,7 +125,7 @@ impl Plot for TpccBasic {
             efficiency_dir.clone(),
             power_dir.clone(),
         ];
-        ensure_plot_dirs(&dir_list).await?;
+        ensure_dirs(&dir_list).await?;
 
         let plot_jobs: Vec<(
             Vec<PlotEntry>,

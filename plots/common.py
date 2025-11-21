@@ -57,8 +57,8 @@ def offset_trace_time(data, data_path):
         out.loc[:, "time"] = out["time"] + s
     return out
 
-def parse_time_string(ramp_time_str):
-    match = re.match(r"(\d+)([smh])", ramp_time_str)
+def parse_time_string(time_str):
+    match = re.match(r"(\d+)([smh])", time_str)
     if not match:
         return 0
     value, unit = match.groups()

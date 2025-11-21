@@ -15,3 +15,5 @@ tracing.workspace = true
 futures.workspace = true
 rayon.workspace = true
 default-benches.workspace = true
+plot-common.workspace = true
+cmd = { path = "../../benches/cmd" }

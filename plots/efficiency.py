@@ -15,7 +15,7 @@ def gen_plots(matrix, filepath, col_labels, x_label, experiment_name, title, rev
         r = ""
     df = pd.DataFrame(matrix, index=col_labels, columns=['ps0 (8.5W)', 'ps1 (4.5W)', 'ps2 (3.2W)'][0:len(matrix[0])])
     df = df.T
-    plt.figure(figsize=(8, 4.8))
+    plt.figure(figsize=(12, 4.8))
     g = sns.heatmap(
         df,
         cmap=f"viridis{r}",
