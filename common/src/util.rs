@@ -1177,7 +1177,8 @@ pub fn write_csv<T: Serialize>(filename: &PathBuf, records: &[T]) -> Result<()> 
 
 #[derive(Debug, Default, Copy, Clone)]
 pub struct SectionStats {
-    pub power: Option<f64>,
+    pub power_mean: Option<f64>,
+    pub power_stddev: Option<f64>,
     pub energy: Option<f64>,
 }
 
@@ -1189,6 +1190,24 @@ pub fn power_energy_calculator(data: &[(usize, Vec<f64>)]) -> SectionStats {
         .sum::<f64>();
     let mean = if count > 0 {
         Some(sum / count as f64)
+    } else {
+        None
+    };
+
+    let stddev = if let Some(mean) = mean {
+        let variance = data
+            .par_iter()
+            .map(|(_, v)| {
+                v.iter()
+                    .map(|x| {
+                        let diff = *x - mean;
+                        diff * diff
+                    })
+                    .sum::<f64>()
+            })
+            .sum::<f64>()
+            / count as f64;
+        Some(variance.sqrt())
     } else {
         None
     };
@@ -1209,7 +1228,8 @@ pub fn power_energy_calculator(data: &[(usize, Vec<f64>)]) -> SectionStats {
     };
 
     SectionStats {
-        power: mean,
+        power_mean: mean,
+        power_stddev: stddev,
         energy,
     }
 }

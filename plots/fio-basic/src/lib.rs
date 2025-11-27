@@ -315,7 +315,7 @@ impl Plot for FioBasic {
                 power_dir.join(format!("{experiment_name}-ssd.pdf")),
                 BarChartKind::Power,
                 Some("SSD"),
-                |data| data.ssd_power.power.unwrap(),
+                |data| data.ssd_power.power_mean.unwrap(),
             ),
             (
                 ready_entries.clone(),
@@ -323,7 +323,7 @@ impl Plot for FioBasic {
                 power_dir.join(format!("{experiment_name}-cpu.pdf")),
                 BarChartKind::Power,
                 Some("CPU"),
-                |data| data.cpu_power.power.unwrap(),
+                |data| data.cpu_power.power_mean.unwrap(),
             ),
             (
                 ready_entries.clone(),
@@ -331,7 +331,15 @@ impl Plot for FioBasic {
                 power_dir.join(format!("{experiment_name}-norm-cpu.pdf")),
                 BarChartKind::NormalizedPower,
                 Some("CPU"),
-                |data| data.cpu_power.power.unwrap(),
+                |data| data.cpu_power.power_mean.unwrap(),
+            ),
+            (
+                ready_entries.clone(),
+                settings,
+                power_dir.join(format!("{experiment_name}-stdev-cpu.pdf")),
+                BarChartKind::NormalizedPower,
+                Some("CPU"),
+                |data| data.cpu_power.power_stddev.unwrap(),
             ),
             (
                 ready_entries.clone(),
@@ -339,7 +347,7 @@ impl Plot for FioBasic {
                 power_dir.join(format!("{experiment_name}-system.pdf")),
                 BarChartKind::Power,
                 Some("System"),
-                |data| data.system_power.power.unwrap(),
+                |data| data.system_power.power_mean.unwrap(),
             ),
             (
                 ready_entries.clone(),
@@ -439,15 +447,17 @@ impl FioBasic {
                 (
                     x,
                     y,
-                    (iops) / item.ssd_power.power.unwrap(),
-                    (iops) / (item.cpu_power.power.unwrap() + item.ssd_power.power.unwrap()),
-                    mb_s / item.ssd_power.power.unwrap(),
-                    mb_s / (item.cpu_power.power.unwrap() + item.ssd_power.power.unwrap()),
-                    item.ssd_power.power.unwrap() * latency.powi(2),
-                    item.ssd_power.power.unwrap() * p99_latency.powi(2),
-                    (item.ssd_power.power.unwrap() + item.cpu_power.power.unwrap())
+                    (iops) / item.ssd_power.power_mean.unwrap(),
+                    (iops)
+                        / (item.cpu_power.power_mean.unwrap() + item.ssd_power.power_mean.unwrap()),
+                    mb_s / item.ssd_power.power_mean.unwrap(),
+                    mb_s / (item.cpu_power.power_mean.unwrap()
+                        + item.ssd_power.power_mean.unwrap()),
+                    item.ssd_power.power_mean.unwrap() * latency.powi(2),
+                    item.ssd_power.power_mean.unwrap() * p99_latency.powi(2),
+                    (item.ssd_power.power_mean.unwrap() + item.cpu_power.power_mean.unwrap())
                         * latency.powi(2),
-                    mb_s / item.cpu_power.power.unwrap(),
+                    mb_s / item.cpu_power.power_mean.unwrap(),
                 )
             })
             .collect::<Vec<_>>();
@@ -847,7 +857,10 @@ impl FioBwOverTime {
         debug!("{trace_file:?}");
         if trace_file.exists() {
             debug!("Parsing trace file {:?}", trace_file);
-            let trace = common::util::parse_trace(&std::fs::File::open(&trace_file)?, &config.fs.clone().unwrap())?;
+            let trace = common::util::parse_trace(
+                &std::fs::File::open(&trace_file)?,
+                &config.fs.clone().unwrap(),
+            )?;
             common::util::write_csv(
                 &plot_path.join("plot_data").join(format!("{name}.csv")),
                 &trace,
