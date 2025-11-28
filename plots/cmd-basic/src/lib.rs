@@ -158,7 +158,7 @@ impl Plot for CmdBasic {
                 power_dir.join(format!("{experiment_name}-cpu.pdf")),
                 "power",
                 "%",
-                |data| data.cpu_power.power.unwrap(),
+                |data| data.cpu_power.power_mean.unwrap(),
             ),
             (
                 ready_entries.clone(),
@@ -166,7 +166,7 @@ impl Plot for CmdBasic {
                 power_dir.join(format!("{experiment_name}-ssd.pdf")),
                 "power",
                 "%",
-                |data| data.ssd_power.power.unwrap(),
+                |data| data.ssd_power.power_mean.unwrap(),
             ),
             (
                 ready_entries.clone(),
@@ -174,7 +174,7 @@ impl Plot for CmdBasic {
                 power_dir.join(format!("{experiment_name}-server.pdf")),
                 "power",
                 "%",
-                |data| data.system_power.power.unwrap(),
+                |data| data.system_power.power_mean.unwrap(),
             ),
             (
                 ready_entries.clone(),

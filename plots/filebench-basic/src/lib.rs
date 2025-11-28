@@ -217,7 +217,7 @@ impl Plot for FilebenchBasic {
                 "power",
                 Some("SSD"),
                 "ms",
-                |data| data.ssd_power.overall.power.unwrap(),
+                |data| data.ssd_power.overall.power_mean.unwrap(),
             ),
             (
                 ready_entries.clone(),
@@ -226,7 +226,7 @@ impl Plot for FilebenchBasic {
                 "power",
                 Some("CPU + DRAM"),
                 "ms",
-                |data| data.ssd_power.init.power.unwrap(),
+                |data| data.ssd_power.init.power_mean.unwrap(),
             ),
             (
                 ready_entries.clone(),
@@ -235,7 +235,7 @@ impl Plot for FilebenchBasic {
                 "power",
                 Some("CPU + DRAM"),
                 "ms",
-                |data| data.ssd_power.benchmark.power.unwrap(),
+                |data| data.ssd_power.benchmark.power_mean.unwrap(),
             ),
             (
                 ready_entries.clone(),
@@ -244,7 +244,7 @@ impl Plot for FilebenchBasic {
                 "power",
                 Some("CPU + DRAM"),
                 "ms",
-                |data| data.ssd_power.post_benchmark.power.unwrap(),
+                |data| data.ssd_power.post_benchmark.power_mean.unwrap(),
             ),
             (
                 ready_entries.clone(),
@@ -253,7 +253,7 @@ impl Plot for FilebenchBasic {
                 "power",
                 Some("CPU + DRAM"),
                 "ms",
-                |data| data.cpu_power.overall.power.unwrap(),
+                |data| data.cpu_power.overall.power_mean.unwrap(),
             ),
             (
                 ready_entries.clone(),
@@ -262,7 +262,7 @@ impl Plot for FilebenchBasic {
                 "power",
                 Some("CPU + DRAM"),
                 "ms",
-                |data| data.cpu_power.init.power.unwrap(),
+                |data| data.cpu_power.init.power_mean.unwrap(),
             ),
             (
                 ready_entries.clone(),
@@ -271,7 +271,7 @@ impl Plot for FilebenchBasic {
                 "power",
                 Some("CPU + DRAM"),
                 "ms",
-                |data| data.cpu_power.benchmark.power.unwrap(),
+                |data| data.cpu_power.benchmark.power_mean.unwrap(),
             ),
             (
                 ready_entries.clone(),
@@ -280,7 +280,7 @@ impl Plot for FilebenchBasic {
                 "power",
                 Some("CPU + DRAM"),
                 "ms",
-                |data| data.cpu_power.post_benchmark.power.unwrap(),
+                |data| data.cpu_power.post_benchmark.power_mean.unwrap(),
             ),
         ];
 
@@ -398,15 +398,15 @@ impl FilebenchBasic {
                 (
                     x,
                     y,
-                    iops / item.ssd_power.overall.power.unwrap(),
-                    iops / item.ssd_power.init.power.unwrap(),
-                    iops / item.ssd_power.benchmark.power.unwrap(),
-                    iops / item.ssd_power.post_benchmark.power.unwrap(),
-                    bytes / item.ssd_power.overall.power.unwrap(),
-                    bytes / item.ssd_power.init.power.unwrap(),
-                    bytes / item.ssd_power.benchmark.power.unwrap(),
-                    bytes / item.ssd_power.post_benchmark.power.unwrap(),
-                    item.ssd_power.benchmark.power.unwrap() * latency.powi(2),
+                    iops / item.ssd_power.overall.power_mean.unwrap(),
+                    iops / item.ssd_power.init.power_mean.unwrap(),
+                    iops / item.ssd_power.benchmark.power_mean.unwrap(),
+                    iops / item.ssd_power.post_benchmark.power_mean.unwrap(),
+                    bytes / item.ssd_power.overall.power_mean.unwrap(),
+                    bytes / item.ssd_power.init.power_mean.unwrap(),
+                    bytes / item.ssd_power.benchmark.power_mean.unwrap(),
+                    bytes / item.ssd_power.post_benchmark.power_mean.unwrap(),
+                    item.ssd_power.benchmark.power_mean.unwrap() * latency.powi(2),
                 )
             })
             .collect::<Vec<_>>();
