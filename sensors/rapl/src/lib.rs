@@ -37,8 +37,8 @@ struct InternalRapl {
 
 impl InternalRapl {
     fn new() -> Result<Self, RaplError> {
-        let topology = 
-            Handle::current().block_on(get_cpu_topology())
+        let topology = Handle::current()
+            .block_on(get_cpu_topology())
             .map_err(|e| RaplError::CreationFailed(e.to_string()))?;
         let mut packages = topology.into_iter().map(|x| x.0).collect::<Vec<_>>();
         packages.sort();
@@ -124,14 +124,10 @@ impl Sensor for Rapl {
                 RAPL_FILENAME,
                 args,
                 init_rapl,
-                |args,
-                 sensor,
-                 _,
-                 last_time|
-                 -> Result<Vec<f64>, SensorError>
-                 { read_rapl(args, sensor, last_time) },
-            )
-            {
+                |args, sensor, _, last_time| -> Result<Vec<f64>, SensorError> {
+                    read_rapl(args, sensor, last_time)
+                },
+            ) {
                 error!("{err:#?}");
                 return Err(err);
             }

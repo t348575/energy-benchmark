@@ -102,10 +102,7 @@ async fn init_sysinfo(_: SysinfoConfig) -> Result<(Arc<Mutex<System>>, Vec<Strin
 
     Ok((
         Arc::new(Mutex::new(sys)),
-        cpu_names
-            .into_iter()
-            .chain(load_names)
-            .collect(),
+        cpu_names.into_iter().chain(load_names).collect(),
     ))
 }
 

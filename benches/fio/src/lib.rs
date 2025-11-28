@@ -11,7 +11,7 @@ use common::{
 use eyre::{ContextCompat, Result, bail};
 use itertools::iproduct;
 use serde::{Deserialize, Serialize};
-use tokio::fs::{read_to_string, write};
+use tokio::fs::{create_dir_all, read_to_string, write};
 use tracing::{debug, info};
 
 pub mod result;
@@ -31,9 +31,12 @@ pub struct Fio {
     pub extra_options: Option<Vec<Vec<String>>>,
     pub job_specific_extra_options: Option<Vec<Vec<String>>>,
     pub job_specific_extra_options_index: Option<usize>,
+    pub matched_args: Option<HashMap<String, Vec<String>>>,
     pub fs: Option<Filesystem>,
     pub skip_format: Option<bool>,
-    pub filename: Option<String>
+    pub filename: Option<String>,
+    pub directory: Option<String>,
+    pub open_dir: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -147,141 +150,166 @@ impl Bench for Fio {
         let extra_options_vec = extra_options.unwrap_or(vec![vec!["--unit_base=0".to_owned()]]);
         let filename = self.filename.clone().unwrap_or(settings.device.clone());
         let cmds = iproduct!(
-            self.request_sizes.iter(),
-            self.io_engines.iter(),
-            self.io_depths.iter(),
-            jobs_vec.into_iter(),
-            extra_options_vec.clone().into_iter(),
+            0..self.request_sizes.len(),
+            0..self.io_engines.len(),
+            0..self.io_depths.len(),
+            0..jobs_vec.len(),
+            0..extra_options_vec.len(),
         )
-        .map(|(req, eng, depth, job, extra_options)| Fio {
-            test_type: self.test_type.clone(),
-            request_sizes: vec![req.clone()],
-            io_engines: vec![eng.clone()],
-            io_depths: vec![*depth],
-            direct: self.direct,
-            time_based: self.time_based,
-            runtime: self.runtime.clone(),
-            ramp_time: self.ramp_time.clone(),
-            size: self.size.clone(),
-            extra_options: Some(vec![extra_options]),
-            num_jobs: Some(vec![job]),
-            job_specific_extra_options: self.job_specific_extra_options.clone(),
-            job_specific_extra_options_index: self.job_specific_extra_options_index.clone(),
-            fs: self.fs.clone(),
-            skip_format: self.skip_format,
-            filename: Some(filename.clone()),
+        .map(|(req_idx, eng_idx, depth_idx, job_idx, extra_idx)| {
+            let bench = Fio {
+                test_type: self.test_type.clone(),
+                request_sizes: vec![self.request_sizes[req_idx].clone()],
+                io_engines: vec![self.io_engines[eng_idx].clone()],
+                io_depths: vec![self.io_depths[depth_idx]],
+                direct: self.direct,
+                time_based: self.time_based,
+                runtime: self.runtime.clone(),
+                ramp_time: self.ramp_time.clone(),
+                size: self.size.clone(),
+                extra_options: Some(vec![extra_options_vec[extra_idx].clone()]),
+                num_jobs: Some(vec![jobs_vec[job_idx]]),
+                job_specific_extra_options: self.job_specific_extra_options.clone(),
+                job_specific_extra_options_index: self.job_specific_extra_options_index.clone(),
+                fs: self.fs.clone(),
+                skip_format: self.skip_format,
+                filename: if self.directory.is_some() || self.open_dir.is_some() {
+                    None
+                } else {
+                    Some(filename.clone())
+                },
+                matched_args: self.matched_args.clone(),
+                directory: self.directory.clone(),
+                open_dir: self.open_dir.clone(),
+            };
+
+            (req_idx, eng_idx, depth_idx, job_idx, extra_idx, bench)
         })
         .enumerate()
-        .map(|(idx, bench)| {
-            let filename = if bench.io_engines[0].eq("spdk") {
-                let pcie_address = get_pcie_address(&settings.device)
-                    .context("Get drive PCIe address")
-                    .unwrap_or("00:00.0".to_owned())
-                    .replace(":", ".");
-                format!("trtype=PCIe traddr={pcie_address} ns=1")
-            } else {
-                bench.filename.clone().unwrap()
-            };
+        .map(
+            |(idx, (req_idx, eng_idx, depth_idx, job_idx, extra_idx, bench))| {
+                let mut args = if !spdk && let Some(numa) = &settings.numa {
+                    vec![
+                        format!("--cpunodebind={}", numa.cpunodebind),
+                        format!("--membind={}", numa.membind),
+                        bench_args.program.clone().unwrap_or("fio".to_owned()),
+                    ]
+                } else {
+                    Vec::new()
+                };
 
-            let mut args = if !spdk && let Some(numa) = &settings.numa {
-                vec![
-                    format!("--cpunodebind={}", numa.cpunodebind),
-                    format!("--membind={}", numa.membind),
-                    bench_args.program.clone().unwrap_or("fio".to_owned()),
+                let temp = vec![
+                    if bench.directory.is_some() {
+                        "--directory"
+                    } else if bench.open_dir.is_some() {
+                        "--open_dir"
+                    } else {
+                        "--filename"
+                    },
+                    "--direct",
+                    "--bs",
+                    "--ioengine",
+                    "--time_based",
+                    "--iodepth",
                 ]
-            } else {
-                Vec::new()
-            };
-
-            let temp = vec![
-                "--filename",
-                "--direct",
-                "--bs",
-                "--ioengine",
-                "--time_based",
-                "--iodepth",
-            ]
-            .into_iter()
-            .zip(vec![
-                filename,
-                int(bench.direct).to_string(),
-                bench.request_sizes[0].clone(),
-                bench.io_engines[0].clone(),
-                int(bench.time_based).to_string(),
-                bench.io_depths[0].to_string(),
-            ])
-            .map(|(arg, value)| format!("{arg}={value}"));
-
-            args.extend(temp);
-            args.push("--output-format=json+".to_owned());
-
-            let log_avg = bench_args.log_avg.unwrap_or(10);
-            if log_avg > 0 {
-                args.push(format!("--log_avg_msec={log_avg}"));
-            }
-            if let Some(size) = &bench.size {
-                args.push(format!("--size={size}"));
-            }
-            if let Some(runtime) = &bench.runtime {
-                args.push(format!("--runtime={runtime}"))
-            }
-            if let Some(ramp_time) = &bench.ramp_time {
-                args.push(format!("--ramp_time={ramp_time}"));
-            }
-
-            bench
-                .test_type
-                .cmds(settings)
                 .into_iter()
-                .for_each(|cmd| args.push(cmd));
+                .zip(vec![
+                    if let Some(directory) = &bench.directory {
+                        directory.clone()
+                    } else if let Some(open_dir) = &bench.open_dir {
+                        open_dir.clone()
+                    } else {
+                        if bench.io_engines[0].eq("spdk") {
+                            let pcie_address = get_pcie_address(&settings.device)
+                                .context("Get drive PCIe address")
+                                .unwrap_or("00:00.0".to_owned())
+                                .replace(":", ".");
+                            format!("trtype=PCIe traddr={pcie_address} ns=1")
+                        } else {
+                            bench.filename.clone().unwrap()
+                        }
+                    },
+                    int(bench.direct).to_string(),
+                    bench.request_sizes[0].clone(),
+                    bench.io_engines[0].clone(),
+                    int(bench.time_based).to_string(),
+                    bench.io_depths[0].to_string(),
+                ])
+                .map(|(arg, value)| format!("{arg}={value}"));
 
-            if let Some(extra_options) = &bench.extra_options {
-                for option in extra_options[0].iter() {
-                    args.push(option.clone());
+                args.extend(temp);
+                args.push("--output-format=json+".to_owned());
+
+                let log_avg = bench_args.log_avg.unwrap_or(10);
+                if log_avg > 0 {
+                    args.push(format!("--log_avg_msec={log_avg}"));
                 }
-            }
+                if let Some(size) = &bench.size {
+                    args.push(format!("--size={size}"));
+                }
+                if let Some(runtime) = &bench.runtime {
+                    args.push(format!("--runtime={runtime}"))
+                }
+                if let Some(ramp_time) = &bench.ramp_time {
+                    args.push(format!("--ramp_time={ramp_time}"));
+                }
 
-            if settings.cgroup.is_some() {
-                args.push("--cgroup=energy-benchmark".to_owned());
-            }
+                bench
+                    .test_type
+                    .cmds(settings)
+                    .into_iter()
+                    .for_each(|cmd| args.push(cmd));
 
-            if spdk && let Some(numa) = &settings.numa {
-                args.push(format!("--numa_cpu_nodes={}", numa.cpunodebind));
-                args.push(format!("--numa_mem_policy={}", numa.membind));
-            }
+                if let Some(extra_options) = &bench.extra_options {
+                    for option in extra_options[0].iter() {
+                        args.push(option.clone());
+                    }
+                }
 
-            if let Some(jobs) = &bench.num_jobs
-                && bench.job_specific_extra_options.is_none()
-            {
-                args.push(format!("--numjobs={}", jobs[0]));
-                args.push(format!("--name={name}"));
-            } else if let Some(num_jobs) = &bench.num_jobs
-                && let Some(specific) = &bench.job_specific_extra_options
-            {
-                let job_specific_extra_options_index =
-                    bench.job_specific_extra_options_index.unwrap_or(0);
-                let extra_opts = bench.extra_options.as_ref().unwrap()[0].join(" ");
-                let extra_options_index = extra_options_vec
-                    .iter()
-                    .position(|x| x.join(" ").eq(&extra_opts))
-                    .unwrap();
+                if let Some(matched) = &bench.matched_args {
+                    apply_matched_index("request_sizes", req_idx, matched, &mut args);
+                    apply_matched_index("io_engines", eng_idx, matched, &mut args);
+                    apply_matched_index("io_depths", depth_idx, matched, &mut args);
+                    apply_matched_index("num_jobs", job_idx, matched, &mut args);
+                    apply_matched_index("extra_options", extra_idx, matched, &mut args);
+                }
+                if settings.cgroup.is_some() {
+                    args.push("--cgroup=energy-benchmark".to_owned());
+                }
 
-                for idx in 0..num_jobs[0] {
+                if spdk && let Some(numa) = &settings.numa {
+                    args.push(format!("--numa_cpu_nodes={}", numa.cpunodebind));
+                    args.push(format!("--numa_mem_policy={}", numa.membind));
+                }
+
+                if let Some(jobs) = &bench.num_jobs
+                    && bench.job_specific_extra_options.is_none()
+                {
+                    args.push(format!("--numjobs={}", jobs[0]));
                     args.push(format!("--name={name}"));
-                    if extra_options_index == job_specific_extra_options_index {
-                        for option in specific[idx].iter() {
-                            args.push(option.clone());
+                } else if let Some(num_jobs) = &bench.num_jobs
+                    && let Some(specific) = &bench.job_specific_extra_options
+                {
+                    let job_specific_extra_options_index =
+                        bench.job_specific_extra_options_index.unwrap_or(0);
+
+                    for idx in 0..num_jobs[0] {
+                        args.push(format!("--name={name}"));
+                        if extra_idx == job_specific_extra_options_index {
+                            for option in specific[idx].iter() {
+                                args.push(option.clone());
+                            }
                         }
                     }
                 }
-            }
 
-            Cmd {
-                args,
-                idx,
-                bench_obj: Box::new(bench),
-            }
-        })
+                Cmd {
+                    args,
+                    idx,
+                    bench_obj: Box::new(bench),
+                }
+            },
+        )
         .collect();
 
         Ok(CmdsResult { program, cmds })
@@ -375,6 +403,10 @@ impl Bench for Fio {
                 None::<String>,
             )
             .await?;
+
+            if let Some(dir) = &self.directory {
+                _ = create_dir_all(dir).await;
+            }
         }
         Ok(())
     }
@@ -440,6 +472,7 @@ fn last_experiment_uses_same_fs(
 impl Fio {
     pub async fn prefill(
         prefill_file: &Path,
+        device: &str,
         size: &str,
         config: &Config,
         settings: &Settings,
@@ -468,7 +501,10 @@ impl Fio {
             job_specific_extra_options_index: None,
             fs: None,
             skip_format: None,
-            filename: None,
+            filename: Some(prefill_file.to_str().unwrap().to_owned()),
+            matched_args: None,
+            directory: None,
+            open_dir: None,
         };
 
         let bench_args: Box<dyn BenchArgs> = 'outer: {
@@ -480,7 +516,7 @@ impl Fio {
             fio.default_bench_args()
         };
         let mut prefill_settings = settings.clone();
-        prefill_settings.device = prefill_file.to_str().unwrap().to_owned();
+        prefill_settings.device = device.to_owned();
         prefill_settings.numa = None;
         prefill_settings.nvme_power_states = None;
         let CmdsResult { cmds, program } = fio.cmds(&prefill_settings, &*bench_args, "prefill")?;
@@ -510,5 +546,19 @@ impl FioTestTypeConfig {
         };
         cmds[0] = format!("--rw={}", cmds[0]);
         cmds
+    }
+}
+
+fn apply_matched_index(
+    field: &str,
+    index: usize,
+    matched: &HashMap<String, Vec<String>>,
+    args: &mut Vec<String>,
+) {
+    let key = format!("{field}[{index}]");
+    if let Some(extra_args) = matched.get(&key) {
+        for a in extra_args {
+            args.push(a.clone());
+        }
     }
 }

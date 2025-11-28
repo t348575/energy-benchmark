@@ -46,12 +46,12 @@ pub struct Settings {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Cgroup {
     pub io: CgroupIo,
-    pub cpuset: CgroupCpuSet
+    pub cpuset: CgroupCpuSet,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CgroupCpuSet {
-    pub cpus: Option<Vec<CpuRange>>
+    pub cpus: Option<Vec<CpuRange>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -174,11 +174,17 @@ impl CgroupCpuSet {
     pub async fn apply<P: AsRef<Path>>(&self, cg_path: P) -> Result<()> {
         let base = cg_path.as_ref();
         if let Some(cpus) = &self.cpus {
-            let cpu_str = cpus.iter().map(|x| if x.1.is_some() {
-                format!("{}-{}", x.0, x.1.as_ref().unwrap())
-            } else {
-                format!("{}", x.0)
-            }).collect::<Vec<_>>().join(",");
+            let cpu_str = cpus
+                .iter()
+                .map(|x| {
+                    if x.1.is_some() {
+                        format!("{}-{}", x.0, x.1.as_ref().unwrap())
+                    } else {
+                        format!("{}", x.0)
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(",");
             write_one_line(base.join("cpuset.cpus"), &cpu_str).await?;
         }
         Ok(())

@@ -195,9 +195,6 @@ impl Bench for Filebench {
             .append(true)
             .open(marker_filename)
             .await?;
-        marker_file
-            .write_all("time,marker_name\n".as_bytes())
-            .await?;
 
         let mut filebench = Command::new(program)
             .args(args)
@@ -221,11 +218,15 @@ impl Bench for Filebench {
         }
 
         read_until_prompt(&mut stdout, FILEBENCH_PROMPT).await?;
-        send_filebench_cmd(&mut stdin, &mut stdout, &format!("load {}", self.job_file)).await?;
+        send_filebench_cmd(&mut stdin, &mut stdout, &format!("load {}", self.job_file))
+            .await
+            .context("Load workload file")?;
 
         for (k, v) in self.vars.as_ref().unwrap()[0].iter() {
             debug!("Setting {k}={v}");
-            send_filebench_cmd(&mut stdin, &mut stdout, &format!("set ${k}={v}")).await?;
+            send_filebench_cmd(&mut stdin, &mut stdout, &format!("set ${k}={v}"))
+                .await
+                .context(format!("Setting {k}={v}"))?;
         }
 
         send_filebench_cmd(
@@ -233,7 +234,8 @@ impl Bench for Filebench {
             &mut stdout,
             &format!("set $dir={}", mountpoint.to_str().unwrap()),
         )
-        .await?;
+        .await
+        .context(format!("Setting $dir={}", mountpoint.to_str().unwrap()))?;
         let start_time = Instant::now();
         for sensor in sensors {
             sensor
@@ -256,14 +258,19 @@ impl Bench for Filebench {
             .await?
         }
         debug!("Sensors started");
-        send_filebench_cmd(&mut stdin, &mut stdout, "create fileset").await?;
-        send_filebench_cmd(&mut stdin, &mut stdout, "system \"sync\"").await?;
+        send_filebench_cmd(&mut stdin, &mut stdout, "create fileset")
+            .await
+            .context("Create fileset")?;
+        send_filebench_cmd(&mut stdin, &mut stdout, "system \"sync\"")
+            .await
+            .context("Sync")?;
         send_filebench_cmd(
             &mut stdin,
             &mut stdout,
             "system \"echo 3 > /proc/sys/vm/drop_caches\"",
         )
-        .await?;
+        .await
+        .context("Drop caches")?;
 
         debug!("Fileset created");
         marker_file
@@ -277,7 +284,13 @@ impl Bench for Filebench {
             )
             .await?;
 
-        send_filebench_cmd(&mut stdin, &mut stdout, &format!("run {}", self.runtime)).await?;
+        debug!("Starting benchmark");
+
+        stdin
+            .write_all(format!("run {}\n", self.runtime).as_bytes())
+            .await?;
+        stdin.flush().await?;
+
         let (stdout, stderr, exit_status) =
             join!(read_output(stdout), read_output(stderr), filebench.wait());
         let exit_status = exit_status?;
@@ -304,6 +317,17 @@ impl Bench for Filebench {
             );
         }
 
+        write(final_results_dir.join("output.txt"), &stdout).await?;
+        let (summary, ops_stats) = match parse_output(&stdout) {
+            Ok(s) => s,
+            Err(err) => bail!(
+                "Failed to parse filebench output! err: {} stdout: {} stderr: {}",
+                err,
+                stdout,
+                stderr
+            ),
+        };
+
         sleep(Duration::from_secs(60)).await;
         debug!(
             "Disk sizes: {}",
@@ -325,16 +349,6 @@ impl Bench for Filebench {
             trace.1.await?;
         }
 
-        write(final_results_dir.join("output.txt"), &stdout).await?;
-        let (summary, ops_stats) = match parse_output(&stdout) {
-            Ok(s) => s,
-            Err(err) => bail!(
-                "Failed to parse filebench output! err: {} stdout: {} stderr: {}",
-                err,
-                stdout,
-                stderr
-            ),
-        };
         write(
             final_results_dir.join("results.json"),
             serde_json::to_string(&FilebenchSummary { summary, ops_stats })?,
@@ -378,7 +392,7 @@ async fn read_output(mut stdout: Pin<&mut impl AsyncReadExt>) -> Result<String> 
         if n == 0 {
             break;
         }
-        buffer.extend_from_slice(&buf);
+        buffer.extend_from_slice(&buf[..n]);
     }
     Ok(String::from_utf8(buffer)?)
 }
