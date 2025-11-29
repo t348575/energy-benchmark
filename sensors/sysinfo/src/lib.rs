@@ -18,6 +18,7 @@ use tokio::{
 use tracing::error;
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SysinfoConfig {
     pub interval: u64,
 }
@@ -32,6 +33,7 @@ impl SensorArgs for SysinfoConfig {
 const SYSINFO_FILENAME: &str = "sysinfo.csv";
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Sysinfo;
 
 impl Sensor for Sysinfo {

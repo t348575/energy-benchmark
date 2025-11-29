@@ -8,6 +8,7 @@ use eyre::Result;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Cmd {
     pub program: String,
     pub args: Option<Vec<String>>,
@@ -15,6 +16,7 @@ pub struct Cmd {
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CmdConfig;
 
 #[typetag::serde]

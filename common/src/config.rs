@@ -14,6 +14,7 @@ use crate::{
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     pub name: String,
     pub settings: Settings,
@@ -23,12 +24,14 @@ pub struct Config {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Sensor {
     pub sensor: sensor_common::SensorKind,
     pub args: Option<Box<dyn SensorArgs>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Settings {
     pub numa: Option<NumaConfig>,
     pub device: String,
@@ -44,20 +47,24 @@ pub struct Settings {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Cgroup {
     pub io: CgroupIo,
     pub cpuset: CgroupCpuSet,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CgroupCpuSet {
     pub cpus: Option<Vec<CpuRange>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CpuRange(u32, Option<u32>);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CgroupIo {
     pub max: Option<CgroupIoLimit>,
     pub weight: Option<usize>,
@@ -66,18 +73,21 @@ pub struct CgroupIo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CgroupIoLimit {
     pub bps: Option<OptionalRwIos>,
     pub iops: Option<OptionalRwIos>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CgroupIoCost {
     pub qos: Option<CgroupIoCostQos>,
     pub model: Option<CgroupIoCostModel>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum CgroupIoCostQos {
     Auto,
     User {
@@ -88,6 +98,7 @@ pub enum CgroupIoCostQos {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum CgroupIoCostModel {
     Auto,
     User {
@@ -98,36 +109,42 @@ pub enum CgroupIoCostModel {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MinMax {
     pub min: u64,
     pub max: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RwIos {
     pub r: u64,
     pub w: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct OptionalRwIos {
     pub r: Option<u64>,
     pub w: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CpuFreq {
     pub freq: usize,
     pub default_governor: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct NumaConfig {
     pub cpunodebind: usize,
     pub membind: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct InnerBench {
     pub name: String,
     pub repeat: usize,

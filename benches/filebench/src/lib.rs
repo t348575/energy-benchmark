@@ -31,6 +31,7 @@ pub mod result;
 const FILEBENCH_PROMPT: &str = "filebench>";
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Filebench {
     pub job_file: String,
     pub vars: Option<Vec<HashMap<String, String>>>,
@@ -42,6 +43,7 @@ pub struct Filebench {
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FilebenchConfig {
     pub program: Option<String>,
 }

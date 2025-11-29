@@ -13,6 +13,7 @@ use tracing::debug;
 pub mod result;
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Mlperf {
     pub model: Model,
     pub memory_gb: u16,
@@ -23,6 +24,7 @@ pub struct Mlperf {
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum Model {
     #[default]
     None,
@@ -43,6 +45,7 @@ impl ToString for Model {
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum AccelType {
     #[default]
     None,
@@ -61,6 +64,7 @@ impl ToString for AccelType {
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MlperfConfig;
 
 #[typetag::serde]

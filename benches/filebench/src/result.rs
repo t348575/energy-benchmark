@@ -2,6 +2,7 @@ use eyre::{ContextCompat, Result};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct OpStat {
     pub name: String,
     pub ops: u64,
@@ -14,6 +15,7 @@ pub struct OpStat {
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct IoSummary {
     pub total_ops: u64,
     pub ops_per_sec: f64,
@@ -25,6 +27,7 @@ pub struct IoSummary {
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FilebenchSummary {
     pub summary: IoSummary,
     pub ops_stats: Vec<OpStat>,

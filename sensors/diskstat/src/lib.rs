@@ -18,6 +18,7 @@ use tokio::{fs::read_to_string, spawn, sync::Mutex, task::JoinHandle};
 use tracing::error;
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DiskstatConfig;
 
 #[typetag::serde]
@@ -28,6 +29,7 @@ impl SensorArgs for DiskstatConfig {
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct InternalDiskStatConfig {
     device: String,
 }
@@ -40,6 +42,7 @@ impl SensorArgs for InternalDiskStatConfig {
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Diskstat;
 
 struct InternalDiskStat {

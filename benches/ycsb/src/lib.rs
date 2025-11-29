@@ -26,6 +26,7 @@ use tracing::debug;
 pub mod result;
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Ycsb {
     pub workload_file: String,
     pub data_var_name: String,
@@ -40,6 +41,7 @@ pub struct Ycsb {
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum OpType {
     #[default]
     None,
@@ -48,6 +50,7 @@ pub enum OpType {
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct YcsbConfig {
     pub root_dir: String,
 }

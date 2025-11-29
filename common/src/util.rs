@@ -896,6 +896,7 @@ pub async fn simple_command_with_output_no_dir(
 }
 
 #[derive(Debug, Default, Clone, PartialOrd, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum Filesystem {
     #[default]
     None,
@@ -1065,6 +1066,7 @@ pub fn calculate_sectioned<CalculatedData: Debug + Default + Copy, const N: usiz
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TraceCalls {
     pub function: String,
     pub time: usize,

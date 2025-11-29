@@ -29,14 +29,17 @@ use tokio::fs::read_to_string;
 use tracing::debug;
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FioBasic {
     pub variables: Vec<String>,
     pub x_label: String,
     pub group: Option<Group>,
     pub labels: Option<Vec<String>>,
+    pub matched_labels: Option<Vec<String>>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Group {
     pub filter: String,
     pub name: String,
@@ -639,15 +642,43 @@ impl FioBasic {
                     .collect()
             }
             "io_engines" => {
-                let set = ready_entries
+                if ready_entries
                     .iter()
-                    .map(|x| x.args.io_engines[0].clone())
-                    .collect::<HashSet<_>>();
-                let data = set.iter().sorted();
-                data.clone()
-                    .enumerate()
-                    .map(|(x, y)| (y.to_string(), y.to_string(), x))
-                    .collect()
+                    .any(|x| x.plot.matched_labels.is_some())
+                {
+                    unimplemented!()
+                    // let data = ready_entries
+                    //     .iter()
+                    //     .map(|x| {
+                    //         let key = x.args.extra_options.as_ref().unwrap()[0].clone();
+                    //         let config_args = config
+                    //             .benches
+                    //             .iter()
+                    //             .find(|b| b.name.eq(&x.info.name))
+                    //             .unwrap();
+                    //         let fio_opts = config_args.bench.downcast_ref::<Fio>().unwrap();
+                    //         let pos = fio_opts
+                    //             .extra_options
+                    //             .as_ref()
+                    //             .unwrap()
+                    //             .iter()
+                    //             .position(|f| f.join(" ").eq(&key.join(" ")))
+                    //             .unwrap();
+                    //         (key.join(" "), x.plot.labels.as_ref().unwrap()[pos].clone())
+                    //     })
+                    //     .collect::<HashSet<_>>();
+                } else {
+                    let set = ready_entries
+                        .iter()
+                        .map(|x| x.args.io_engines[0].clone())
+                        .collect::<HashSet<_>>();
+
+                    let data = set.iter().sorted();
+                    data.clone()
+                        .enumerate()
+                        .map(|(x, y)| (y.to_string(), y.to_string(), x))
+                        .collect()
+                }
             }
             "num_jobs" | "io_depths" => {
                 let set = ready_entries
@@ -771,6 +802,7 @@ fn mean_p99_latency(x: &Job) -> f64 {
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FioBwOverTime {
     variable: String,
 }

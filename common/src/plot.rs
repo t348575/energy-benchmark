@@ -21,6 +21,7 @@ use crate::{
 use tokio::fs::create_dir_all;
 
 #[derive(Debug, Default, PartialEq, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum PlotType {
     #[default]
     Individual,

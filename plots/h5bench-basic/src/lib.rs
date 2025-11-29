@@ -24,6 +24,7 @@ use tokio::fs::read_to_string;
 use tracing::debug;
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct H5BenchBasic;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -337,6 +338,7 @@ impl H5BenchBasic {
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct H5BenchPowerTime {
     pub offset: Option<usize>,
 }

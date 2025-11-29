@@ -23,6 +23,7 @@ use tpcc_postgres::{TpccPostgres, result::TpccPostgresMetrics};
 use tracing::debug;
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TpccBasic;
 
 #[derive(Debug, Clone)]
@@ -311,6 +312,7 @@ impl TpccBasic {
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TpccPowerTime {
     pub offset: Option<usize>,
 }

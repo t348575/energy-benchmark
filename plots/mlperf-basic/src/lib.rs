@@ -27,6 +27,7 @@ use tokio::fs::read_to_string;
 use tracing::debug;
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MlperfBasic;
 
 #[derive(Debug, Clone)]
@@ -344,6 +345,7 @@ impl MlperfBasic {
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MlperfPowerTime {
     pub offset: Option<usize>,
 }

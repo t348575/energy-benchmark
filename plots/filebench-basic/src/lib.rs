@@ -24,6 +24,7 @@ use tokio::fs::read_to_string;
 use tracing::debug;
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FilebenchBasic {
     var_name: String,
 }
@@ -542,6 +543,7 @@ impl FilebenchBasic {
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FilebenchPowerTime {
     pub var_name: String,
     pub offset: Option<usize>,

@@ -78,6 +78,7 @@ impl SensorState {
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Powersensor3Config {
     pub device: String,
 }
@@ -92,6 +93,7 @@ impl SensorArgs for Powersensor3Config {
 const POWERSENSOR_FILENAME: &str = "powersensor3.csv";
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Powersensor3;
 
 impl Sensor for Powersensor3 {

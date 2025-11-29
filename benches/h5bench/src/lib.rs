@@ -12,6 +12,7 @@ use serde_json::json;
 use tokio::fs::{copy, read_dir, write};
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct H5Bench {
     pub rank: usize,
     pub benchmark: Benchmark,
@@ -22,6 +23,7 @@ pub struct H5Bench {
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 #[serde(rename_all = "snake_case")]
 pub enum Benchmark {
     #[default]
@@ -31,6 +33,7 @@ pub enum Benchmark {
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct H5BenchConfig {
     pub h5bench: String,
     pub hdf5: String,

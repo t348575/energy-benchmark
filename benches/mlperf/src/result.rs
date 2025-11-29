@@ -5,11 +5,13 @@ use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MlperfMetrics {
     pub metric: Metric,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Metric {
     pub train_au_percentage: Vec<f64>,
     pub train_au_mean_percentage: f64,

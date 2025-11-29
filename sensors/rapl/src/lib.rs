@@ -82,6 +82,7 @@ impl InternalRapl {
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RaplConfig;
 
 #[typetag::serde]
@@ -94,6 +95,7 @@ impl SensorArgs for RaplConfig {
 const RAPL_FILENAME: &str = "rapl.csv";
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Rapl;
 
 impl Sensor for Rapl {

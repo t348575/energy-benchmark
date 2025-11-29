@@ -54,6 +54,7 @@ unsafe impl Send for InternalPmt {}
 unsafe impl Send for ffi::State {}
 
 #[derive(Debug, Default, PartialEq, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum SensorType {
     #[default]
     None,
@@ -92,6 +93,7 @@ impl InternalPmt {
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PmtConfig {
     pub sensor: SensorType,
     pub indexes: Vec<i32>,
@@ -105,6 +107,7 @@ impl SensorArgs for PmtConfig {
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Pmt;
 
 impl Sensor for Pmt {

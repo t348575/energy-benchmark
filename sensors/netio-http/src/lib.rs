@@ -18,11 +18,13 @@ use tokio::{spawn, task::JoinHandle, time::sleep};
 use tracing::error;
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct NetioHttpConfig {
     pub pdus: Vec<NetioHttpPdu>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct NetioHttpPdu {
     pub alias: String,
     pub url: String,
@@ -39,6 +41,7 @@ impl SensorArgs for NetioHttpConfig {
 const NETIO_FILENAME: &str = "netio-http.csv";
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct NetioHttp;
 
 #[derive(Debug, Clone)]

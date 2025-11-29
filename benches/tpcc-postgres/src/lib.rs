@@ -20,6 +20,7 @@ pub mod result;
 const DOCKER: &str = "docker";
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TpccPostgres {
     pub num_clients: Vec<u8>,
     pub warehouses: usize,
@@ -29,6 +30,7 @@ pub struct TpccPostgres {
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TpccPostgresConfig {
     pub benchhelpers: String,
     pub tpcc_postgres: String,

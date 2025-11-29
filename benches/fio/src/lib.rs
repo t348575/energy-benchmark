@@ -17,6 +17,7 @@ use tracing::{debug, info};
 pub mod result;
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Fio {
     pub test_type: FioTestTypeConfig,
     pub request_sizes: Vec<String>,
@@ -40,6 +41,7 @@ pub struct Fio {
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FioConfig {
     pub program: Option<String>,
     pub log_avg: Option<usize>,
@@ -54,6 +56,7 @@ impl BenchArgs for FioConfig {
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FioTestTypeConfig {
     #[serde(rename = "type")]
     pub _type: FioTestType,
@@ -61,12 +64,14 @@ pub struct FioTestTypeConfig {
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FioTestTypeArgs {
     pub read: u8,
     pub write: u8,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 #[serde(rename_all = "snake_case")]
 pub enum FioTestType {
     #[default]
@@ -79,6 +84,7 @@ pub enum FioTestType {
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ReadWriteOpts {
     pub read: i32,
     pub write: i32,
@@ -202,7 +208,7 @@ impl Bench for Fio {
                     if bench.directory.is_some() {
                         "--directory"
                     } else if bench.open_dir.is_some() {
-                        "--open_dir"
+                        "--opendir"
                     } else {
                         "--filename"
                     },

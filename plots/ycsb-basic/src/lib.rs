@@ -23,6 +23,7 @@ use tracing::debug;
 use ycsb::{Ycsb, result::YcsbMetrics};
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct YcsbBasic;
 
 #[derive(Debug, Clone)]
@@ -386,6 +387,7 @@ impl YcsbBasic {
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct YcsbPowerTime {
     pub offset: Option<usize>,
 }

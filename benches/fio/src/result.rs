@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FioResult {
     #[serde(rename = "fio version")]
     pub fio_version: String,
@@ -16,6 +17,7 @@ pub struct FioResult {
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GlobalOptions {
     pub filename: Option<String>,
     pub direct: Option<String>,
@@ -32,6 +34,7 @@ pub struct GlobalOptions {
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Job {
     pub jobname: String,
     pub groupid: i64,
@@ -64,6 +67,7 @@ pub struct Job {
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct JobOptions {
     pub name: String,
     pub filename: Option<String>,
@@ -83,6 +87,7 @@ pub struct JobOptions {
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Read {
     pub io_bytes: i64,
     pub io_kbytes: i64,
@@ -110,6 +115,7 @@ pub struct Read {
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SlatNs {
     pub min: i64,
     pub max: i64,
@@ -120,6 +126,7 @@ pub struct SlatNs {
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct LatNs {
     pub min: i64,
     pub max: i64,
@@ -130,6 +137,7 @@ pub struct LatNs {
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Write {
     pub io_bytes: i64,
     pub io_kbytes: i64,
@@ -157,6 +165,7 @@ pub struct Write {
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ClatNs {
     pub min: i64,
     pub max: i64,
@@ -169,6 +178,7 @@ pub struct ClatNs {
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Percentile {
     #[serde(rename = "1.000000")]
     pub n1_000000: i64,
@@ -207,6 +217,7 @@ pub struct Percentile {
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Trim {
     pub io_bytes: i64,
     pub io_kbytes: i64,
@@ -234,12 +245,14 @@ pub struct Trim {
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Sync {
     pub total_ios: i64,
     pub lat_ns: LatNs,
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct IodepthLevel {
     #[serde(rename = "1")]
     pub n1: f64,
@@ -258,6 +271,7 @@ pub struct IodepthLevel {
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct IodepthSubmit {
     #[serde(rename = "0")]
     pub n0: f64,
@@ -276,6 +290,7 @@ pub struct IodepthSubmit {
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct IodepthComplete {
     #[serde(rename = "0")]
     pub n0: f64,
@@ -294,6 +309,7 @@ pub struct IodepthComplete {
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct LatencyNs {
     #[serde(rename = "2")]
     pub n2: f64,
@@ -318,6 +334,7 @@ pub struct LatencyNs {
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct LatencyUs {
     #[serde(rename = "2")]
     pub n2: f64,
@@ -342,6 +359,7 @@ pub struct LatencyUs {
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct LatencyMs {
     #[serde(rename = "2")]
     pub n2: f64,
@@ -370,6 +388,7 @@ pub struct LatencyMs {
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DiskUtil {
     pub name: String,
     pub read_ios: i64,

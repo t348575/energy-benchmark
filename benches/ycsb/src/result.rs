@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct OpMetrics {
     pub ops: u64,
     pub average_latency_us: f64,
@@ -14,6 +15,7 @@ pub struct OpMetrics {
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct YcsbMetrics {
     pub total_operations: Option<u64>,
     pub throughput_ops_sec: Option<f64>,

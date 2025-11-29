@@ -258,6 +258,7 @@ pub struct Cmd {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BenchInfo {
     pub param_map: HashMap<String, BenchParams>,
     pub device_power_states: Vec<(f64, String)>,
@@ -266,6 +267,7 @@ pub struct BenchInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BenchParams {
     pub power_state: i32,
     pub iteration: usize,
