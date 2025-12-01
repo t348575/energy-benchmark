@@ -330,6 +330,22 @@ impl Plot for FioBasic {
             (
                 ready_entries.clone(),
                 settings,
+                power_dir.join(format!("{experiment_name}-stdev-ssd.pdf")),
+                BarChartKind::Power,
+                Some("SSD"),
+                |data| data.ssd_power.power_stddev.unwrap(),
+            ),
+            (
+                ready_entries.clone(),
+                settings,
+                power_dir.join(format!("{experiment_name}-rolling-stdev-ssd.pdf")),
+                BarChartKind::Power,
+                Some("SSD"),
+                |data| data.ssd_power.power_stddev_rolling_100ms.unwrap(),
+            ),
+            (
+                ready_entries.clone(),
+                settings,
                 power_dir.join(format!("{experiment_name}-cpu.pdf")),
                 BarChartKind::Power,
                 Some("CPU"),
