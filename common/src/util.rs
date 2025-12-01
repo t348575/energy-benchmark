@@ -1181,6 +1181,7 @@ pub fn write_csv<T: Serialize>(filename: &PathBuf, records: &[T]) -> Result<()> 
 pub struct SectionStats {
     pub power_mean: Option<f64>,
     pub power_stddev: Option<f64>,
+    pub power_stddev_rolling_100ms: Option<f64>,
     pub energy: Option<f64>,
 }
 
@@ -1195,6 +1196,8 @@ pub fn power_energy_calculator(data: &[(usize, Vec<f64>)]) -> SectionStats {
     } else {
         None
     };
+
+    let powers: Vec<(usize, f64)> = data.iter().map(|(t, v)| (*t, v[0])).collect();
 
     let stddev = if let Some(mean) = mean {
         let variance = data
@@ -1229,9 +1232,49 @@ pub fn power_energy_calculator(data: &[(usize, Vec<f64>)]) -> SectionStats {
         None
     };
 
+    let window_ms: usize = 100;
+    let mut rolling_means = Vec::with_capacity(count);
+
+    let mut left = 0usize;
+    let mut sum_window = 0.0f64;
+
+    for right in 0..powers.len() {
+        let (t_right, p_right) = powers[right];
+        sum_window += p_right;
+
+        while left < right && t_right.saturating_sub(powers[left].0) > window_ms {
+            sum_window -= powers[left].1;
+            left += 1;
+        }
+
+        let len_window = right - left + 1;
+        if len_window > 0 {
+            rolling_means.push(sum_window / (len_window as f64));
+        }
+    }
+
+    let power_stddev_rolling_100ms = if rolling_means.len() >= 2 {
+        let n = rolling_means.len() as f64;
+        let mean_rm = rolling_means.par_iter().cloned().sum::<f64>() / n;
+
+        let var_rm = rolling_means
+            .par_iter()
+            .map(|x| {
+                let d = *x - mean_rm;
+                d * d
+            })
+            .sum::<f64>()
+            / n;
+
+        Some(var_rm.sqrt())
+    } else {
+        None
+    };
+
     SectionStats {
         power_mean: mean,
         power_stddev: stddev,
+        power_stddev_rolling_100ms,
         energy,
     }
 }

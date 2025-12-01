@@ -32,12 +32,20 @@ pub struct Fio {
     pub extra_options: Option<Vec<Vec<String>>>,
     pub job_specific_extra_options: Option<Vec<Vec<String>>>,
     pub job_specific_extra_options_index: Option<usize>,
-    pub matched_args: Option<HashMap<String, Vec<String>>>,
+    pub matched_args: Option<Vec<MatchedKv>>,
     pub fs: Option<Filesystem>,
     pub skip_format: Option<bool>,
     pub filename: Option<String>,
     pub directory: Option<String>,
     pub open_dir: Option<String>,
+    // TODO: placeholder so that old config files don't break, to be removed
+    pub prefill: Option<bool>,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MatchedKv {
+    pub key: String,
+    pub value: Vec<String>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -187,13 +195,14 @@ impl Bench for Fio {
                 matched_args: self.matched_args.clone(),
                 directory: self.directory.clone(),
                 open_dir: self.open_dir.clone(),
+                prefill: None
             };
 
             (req_idx, eng_idx, depth_idx, job_idx, extra_idx, bench)
         })
         .enumerate()
         .map(
-            |(idx, (req_idx, eng_idx, depth_idx, job_idx, extra_idx, bench))| {
+            |(idx, (req_idx, eng_idx, depth_idx, job_idx, extra_idx, mut bench))| {
                 let mut args = if !spdk && let Some(numa) = &settings.numa {
                     vec![
                         format!("--cpunodebind={}", numa.cpunodebind),
@@ -273,12 +282,45 @@ impl Bench for Fio {
                 }
 
                 if let Some(matched) = &bench.matched_args {
-                    apply_matched_index("request_sizes", req_idx, matched, &mut args);
-                    apply_matched_index("io_engines", eng_idx, matched, &mut args);
-                    apply_matched_index("io_depths", depth_idx, matched, &mut args);
-                    apply_matched_index("num_jobs", job_idx, matched, &mut args);
-                    apply_matched_index("extra_options", extra_idx, matched, &mut args);
+                    let mut final_matched = Vec::new();
+                    apply_matched_index(
+                        "request_sizes",
+                        req_idx,
+                        matched,
+                        &mut args,
+                        &mut final_matched,
+                    );
+                    apply_matched_index(
+                        "io_engines",
+                        eng_idx,
+                        matched,
+                        &mut args,
+                        &mut final_matched,
+                    );
+                    apply_matched_index(
+                        "io_depths",
+                        depth_idx,
+                        matched,
+                        &mut args,
+                        &mut final_matched,
+                    );
+                    apply_matched_index(
+                        "num_jobs",
+                        job_idx,
+                        matched,
+                        &mut args,
+                        &mut final_matched,
+                    );
+                    apply_matched_index(
+                        "extra_options",
+                        extra_idx,
+                        matched,
+                        &mut args,
+                        &mut final_matched,
+                    );
+                    bench.matched_args = Some(final_matched);
                 }
+
                 if settings.cgroup.is_some() {
                     args.push("--cgroup=energy-benchmark".to_owned());
                 }
@@ -511,6 +553,7 @@ impl Fio {
             matched_args: None,
             directory: None,
             open_dir: None,
+            prefill: None
         };
 
         let bench_args: Box<dyn BenchArgs> = 'outer: {
@@ -558,12 +601,14 @@ impl FioTestTypeConfig {
 fn apply_matched_index(
     field: &str,
     index: usize,
-    matched: &HashMap<String, Vec<String>>,
+    matched: &Vec<MatchedKv>,
     args: &mut Vec<String>,
+    final_matched: &mut Vec<MatchedKv>,
 ) {
     let key = format!("{field}[{index}]");
-    if let Some(extra_args) = matched.get(&key) {
-        for a in extra_args {
+    if let Some(extra_args) = matched.iter().find(|x| x.key == key) {
+        final_matched.push(extra_args.clone());
+        for a in &extra_args.value {
             args.push(a.clone());
         }
     }

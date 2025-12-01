@@ -277,6 +277,17 @@ pub struct BenchParams {
     pub args: Box<dyn Bench>,
 }
 
+impl PartialEq for BenchParams {
+    fn eq(&self, other: &Self) -> bool {
+        self.power_state == other.power_state
+            && self.iteration == other.iteration
+            && self.name == other.name
+            && self.idx == other.idx
+    }
+}
+
+impl Eq for BenchParams {}
+
 pub async fn trace_nvme_calls(trace_out_dir: &Path) -> Result<(Child, JoinHandle<()>, Instant)> {
     let trace_start_time = Instant::now();
     let mut bpftrace = Command::new("bpftrace")

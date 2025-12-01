@@ -724,7 +724,12 @@ pub async fn estimate_runtime(config_file: &str) -> Result<()> {
     Ok(())
 }
 
-pub async fn generate_info(results_dir: &str) -> Result<()> {
+pub async fn generate_info(
+    results_dir: &str,
+    device_power_states: Option<String>,
+    cpu_freq_limits: Option<String>,
+    cpu_topology: Option<String>,
+) -> Result<()> {
     let config_file = Path::new(results_dir).join("config.yaml");
     let config: Config = serde_yml::from_str(&read_to_string(&config_file).await?)
         .context(format!("Failed reading {:?}", config_file))?;
@@ -734,20 +739,36 @@ pub async fn generate_info(results_dir: &str) -> Result<()> {
         None => vec![],
     };
     let nvme_cli_device = strip_nvme_namespace(&config.settings.device);
-    let device_power_states = fetch_nvme_power_states(&nvme_cli_device)
-        .await
-        .context("Fetch NVMe power states")?;
+
+    let device_power_states = match device_power_states {
+        Some(ps) => serde_json::from_str(&ps)?,
+        None => fetch_nvme_power_states(&nvme_cli_device)
+            .await
+            .context("Fetch NVMe power states")?,
+    };
     debug!("Fetched NVMe power states: {device_power_states:?}");
 
-    let cpu_topology = get_cpu_topology().await?;
-    let cpu_min_freq = read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_min_freq")
-        .await?
-        .trim()
-        .parse()?;
-    let cpu_max_freq = read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq")
-        .await?
-        .trim()
-        .parse()?;
+    let cpu_topology = match cpu_topology {
+        Some(ps) => serde_json::from_str(&ps)?,
+        None => get_cpu_topology().await?,
+    };
+
+    let (cpu_min_freq, cpu_max_freq) = match cpu_freq_limits {
+        Some(ps) => serde_json::from_str(&ps)?,
+        None => {
+            let cpu_min_freq =
+                read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_min_freq")
+                    .await?
+                    .trim()
+                    .parse()?;
+            let cpu_max_freq =
+                read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq")
+                    .await?
+                    .trim()
+                    .parse()?;
+            (cpu_min_freq, cpu_max_freq)
+        }
+    };
 
     let mut bench_info = BenchInfo {
         param_map: HashMap::new(),

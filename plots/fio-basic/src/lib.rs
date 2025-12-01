@@ -1,5 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
+    hash::{Hash, Hasher},
     path::{Path, PathBuf},
 };
 
@@ -35,7 +36,14 @@ pub struct FioBasic {
     pub x_label: String,
     pub group: Option<Group>,
     pub labels: Option<Vec<String>>,
-    pub matched_labels: Option<Vec<String>>,
+    pub matched_labels: Option<Vec<MatchedLabelEntry>>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MatchedLabelEntry {
+    pub label: String,
+    pub items: Vec<usize>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -153,13 +161,15 @@ impl Plot for FioBasic {
         let ready_entries = entries
             .into_iter()
             .map(|item| {
-                let (json, powersensor3, rapl, sysinfo, system, _, info, plot) = item;
+                let (json, powersensor3, rapl, sysinfo, system, dir, info, plot) = item;
                 let rapl = rapl.context("Read rapl").unwrap();
                 let powersensor3 = powersensor3.context("Read powersensor3").unwrap();
                 let sysinfo = sysinfo.context("Read sysinfo").unwrap();
                 let system = system.context("Read system power").unwrap();
                 let fio_result = json
-                    .context(format!("Could not parse fio results.json for {info:#?}"))
+                    .context(format!(
+                        "Could not parse fio results.json in {dir} for {info:#?}"
+                    ))
                     .unwrap();
 
                 let parse_ramp_time = |ramp_time: &Option<String>| match ramp_time {
@@ -340,9 +350,17 @@ impl Plot for FioBasic {
                 ready_entries.clone(),
                 settings,
                 power_dir.join(format!("{experiment_name}-stdev-cpu.pdf")),
-                BarChartKind::NormalizedPower,
+                BarChartKind::Power,
                 Some("CPU"),
                 |data| data.cpu_power.power_stddev.unwrap(),
+            ),
+            (
+                ready_entries.clone(),
+                settings,
+                power_dir.join(format!("{experiment_name}-rolling-stdev-cpu.pdf")),
+                BarChartKind::Power,
+                Some("CPU"),
+                |data| data.cpu_power.power_stddev_rolling_100ms.unwrap(),
             ),
             (
                 ready_entries.clone(),
@@ -440,7 +458,9 @@ impl FioBasic {
                 let latency = item.result.jobs.iter().map(mean_latency).sum::<f64>()
                     / item.result.jobs.len() as f64;
                 let p99_latency = item.result.jobs.iter().map(mean_p99_latency).sum::<f64>();
-                let x = *order.get(&self.get_order_key(item)).unwrap();
+                let x = *order
+                    .get(&self.get_order_key(item.clone(), config))
+                    .unwrap();
                 let y = if item.info.power_state == -1 {
                     0
                 } else {
@@ -571,7 +591,11 @@ impl FioBasic {
         }
 
         for item in results.iter_mut() {
-            item.sort_by_key(|entry| order.get(&self.get_order_key(&entry.0)).unwrap());
+            item.sort_by_key(|entry| {
+                order
+                    .get(&self.get_order_key(entry.0.clone(), config))
+                    .unwrap()
+            });
         }
 
         match chart_kind {
@@ -596,116 +620,168 @@ impl FioBasic {
         plot_bar_chart(&filepath, results, labels, config, bench_info)
     }
 
-    fn get_order_key(&self, entry: &PlotEntry) -> String {
-        let matcher = |variable: &str| match variable {
-            "request_sizes" => entry.args.request_sizes[0].clone(),
-            "io_depths" => entry.args.io_depths[0].to_string(),
-            "num_jobs" => entry.args.num_jobs.as_ref().unwrap()[0].to_string(),
-            "io_engines" => entry.args.io_engines[0].clone(),
-            "extra_options" => {
-                if entry.plot.group.is_some() {
-                    entry.plot.group.as_ref().unwrap().x_label.clone()
-                } else if entry.plot.labels.is_some() {
-                    entry.args.extra_options.as_ref().unwrap()[0]
-                        .clone()
-                        .join(" ")
-                } else {
-                    unreachable!("extra_options expects either group or labels")
-                }
-            }
-            _ => unreachable!("Unsupported plot variable {}", variable),
-        };
-        self.variables.iter().map(|var| matcher(var)).join("-")
-    }
-
-    fn get_variable_ordering(
+    fn get_variable_ordering<'a>(
         &self,
         config: &Config,
         variable: &str,
-        ready_entries: &[PlotEntry],
-    ) -> Vec<(String, String, usize)> {
+        ready_entries: &'a [PlotEntry],
+    ) -> Vec<(&'a PlotEntry, String, String, usize)> {
+        struct OrderingEntry<'a, T: Eq + Hash + Ord + ToString> {
+            entry: &'a PlotEntry,
+            value: T,
+            label: String,
+        }
+
+        impl<T: Eq + Hash + Ord + ToString> Hash for OrderingEntry<'_, T> {
+            fn hash<H: Hasher>(&self, state: &mut H) {
+                self.value.hash(state);
+            }
+        }
+
+        impl<T: Eq + Hash + Ord + ToString> PartialEq for OrderingEntry<'_, T> {
+            fn eq(&self, other: &Self) -> bool {
+                self.value == other.value
+            }
+        }
+        impl<T: Eq + Hash + Ord + ToString> Eq for OrderingEntry<'_, T> {}
+
+        fn finalize_hashset<T: Eq + Hash + Ord + ToString>(
+            set: HashSet<OrderingEntry<'_, T>>,
+            use_label_as_value: bool,
+        ) -> Vec<(&'_ PlotEntry, String, String, usize)> {
+            let data = set.into_iter().sorted_by(|a, b| a.value.cmp(&b.value));
+            data.enumerate()
+                .map(|(x, y)| {
+                    (
+                        y.entry,
+                        if use_label_as_value {
+                            y.label.clone()
+                        } else {
+                            y.value.to_string()
+                        },
+                        y.label,
+                        x,
+                    )
+                })
+                .collect()
+        }
+
         match variable {
             "request_sizes" => {
                 let set = ready_entries
                     .iter()
-                    .map(|x| {
-                        (
-                            parse_data_size(&x.args.request_sizes[0]).unwrap(),
-                            x.args.request_sizes[0].clone(),
-                        )
+                    .map(|x| OrderingEntry {
+                        entry: x,
+                        value: parse_data_size(&x.args.request_sizes[0]).unwrap(),
+                        label: x.args.request_sizes[0].clone(),
                     })
                     .collect::<HashSet<_>>();
-                let data = set.iter().sorted_by(|a, b| a.0.cmp(&b.0));
-                data.clone()
-                    .enumerate()
-                    .map(|(x, y)| (y.1.clone(), y.1.clone(), x))
-                    .collect()
+                finalize_hashset(set, true)
             }
             "io_engines" => {
                 if ready_entries
                     .iter()
                     .any(|x| x.plot.matched_labels.is_some())
                 {
-                    unimplemented!()
-                    // let data = ready_entries
-                    //     .iter()
-                    //     .map(|x| {
-                    //         let key = x.args.extra_options.as_ref().unwrap()[0].clone();
-                    //         let config_args = config
-                    //             .benches
-                    //             .iter()
-                    //             .find(|b| b.name.eq(&x.info.name))
-                    //             .unwrap();
-                    //         let fio_opts = config_args.bench.downcast_ref::<Fio>().unwrap();
-                    //         let pos = fio_opts
-                    //             .extra_options
-                    //             .as_ref()
-                    //             .unwrap()
-                    //             .iter()
-                    //             .position(|f| f.join(" ").eq(&key.join(" ")))
-                    //             .unwrap();
-                    //         (key.join(" "), x.plot.labels.as_ref().unwrap()[pos].clone())
-                    //     })
-                    //     .collect::<HashSet<_>>();
+                    let data = ready_entries
+                        .iter()
+                        .map(|x| {
+                            let key = x.args.matched_args.as_ref().unwrap();
+                            let config_args = config
+                                .benches
+                                .iter()
+                                .find(|b| b.name.eq(&x.info.name))
+                                .unwrap();
+                            let fio_opts = config_args.bench.downcast_ref::<Fio>().unwrap();
+
+                            let matched_indexes = fio_opts
+                                .matched_args
+                                .as_ref()
+                                .unwrap()
+                                .iter()
+                                .enumerate()
+                                .filter_map(|(idx, x)| {
+                                    if key.iter().find(|y| y.eq(&x)).is_some() {
+                                        Some(idx)
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect::<Vec<_>>();
+                            for label in x.plot.matched_labels.as_ref().unwrap() {
+                                if !label.items.is_empty()
+                                    && label.items.iter().all(|x| matched_indexes.contains(x))
+                                {
+                                    let key = key
+                                        .iter()
+                                        .map(|x| format!("{}={}", x.key, x.value.join(", ")))
+                                        .join(" ");
+
+                                    return OrderingEntry {
+                                        entry: x,
+                                        value: format!("{}-{key}", x.args.io_engines[0]),
+                                        label: label.label.clone(),
+                                    };
+                                } else if matched_indexes.is_empty() && label.items.is_empty() {
+                                    return OrderingEntry {
+                                        entry: x,
+                                        value: x.args.io_engines[0].clone(),
+                                        label: label.label.clone(),
+                                    };
+                                }
+                            }
+                            unreachable!(
+                                "Could not find matched label for args: {}",
+                                key.iter()
+                                    .map(|x| format!("{}={}", x.key, x.value.join(", ")))
+                                    .join(" ")
+                            )
+                        })
+                        .collect::<HashSet<_>>();
+
+                    finalize_hashset(data, false)
                 } else {
                     let set = ready_entries
                         .iter()
-                        .map(|x| x.args.io_engines[0].clone())
+                        .map(|x| OrderingEntry {
+                            entry: x,
+                            value: x.args.io_engines[0].clone(),
+                            label: x.args.io_engines[0].clone(),
+                        })
                         .collect::<HashSet<_>>();
 
-                    let data = set.iter().sorted();
-                    data.clone()
-                        .enumerate()
-                        .map(|(x, y)| (y.to_string(), y.to_string(), x))
-                        .collect()
+                    finalize_hashset(set, false)
                 }
             }
             "num_jobs" | "io_depths" => {
                 let set = ready_entries
                     .iter()
-                    .map(|item| match variable {
-                        "num_jobs" => item.args.num_jobs.as_ref().unwrap()[0],
-                        "io_depths" => item.args.io_depths[0],
-                        _ => unreachable!(),
+                    .map(|item| {
+                        let x = match variable {
+                            "num_jobs" => item.args.num_jobs.as_ref().unwrap()[0],
+                            "io_depths" => item.args.io_depths[0],
+                            _ => unreachable!(),
+                        };
+                        OrderingEntry {
+                            entry: item,
+                            value: x,
+                            label: x.to_string(),
+                        }
                     })
                     .collect::<HashSet<_>>();
-                let data = set.into_iter().sorted();
-                data.clone()
-                    .enumerate()
-                    .map(|(x, y)| (y.to_string(), y.to_string(), x))
-                    .collect()
+                finalize_hashset(set, true)
             }
             "extra_options" => {
                 if ready_entries.iter().any(|x| x.plot.group.is_some()) {
                     let data = ready_entries
                         .iter()
-                        .map(|x| x.plot.group.as_ref().unwrap().x_label.clone())
+                        .map(|x| OrderingEntry {
+                            entry: x,
+                            value: x.plot.group.as_ref().unwrap().x_label.clone(),
+                            label: x.plot.group.as_ref().unwrap().x_label.clone(),
+                        })
                         .collect::<HashSet<_>>();
-                    let data = data.into_iter().sorted();
-                    data.clone()
-                        .enumerate()
-                        .map(|(x, y)| (y.clone(), y, x))
-                        .collect()
+                    finalize_hashset(data, false)
                 } else if ready_entries.iter().any(|x| x.plot.labels.is_some()) {
                     let data = ready_entries
                         .iter()
@@ -724,20 +800,30 @@ impl FioBasic {
                                 .iter()
                                 .position(|f| f.join(" ").eq(&key.join(" ")))
                                 .unwrap();
-                            (key.join(" "), x.plot.labels.as_ref().unwrap()[pos].clone())
+                            OrderingEntry {
+                                entry: x,
+                                value: key.join(" "),
+                                label: x.plot.labels.as_ref().unwrap()[pos].clone(),
+                            }
                         })
                         .collect::<HashSet<_>>();
-                    let data = data.into_iter().sorted();
-                    data.into_iter()
-                        .enumerate()
-                        .map(|(x, (args, label))| (args, label, x))
-                        .collect()
+                    finalize_hashset(data, false)
                 } else {
                     unreachable!("extra_options expects either group or labels")
                 }
             }
             _ => unreachable!("Unsupported variable {}", variable),
         }
+    }
+
+    fn get_order_key(&self, entry: PlotEntry, config: &Config) -> String {
+        self.get_order_labels(&config, &[entry.clone()])
+            .0
+            .iter()
+            .next()
+            .unwrap()
+            .0
+            .clone()
     }
 
     fn get_order_labels(
@@ -755,8 +841,8 @@ impl FioBasic {
         let mut order = HashMap::new();
         let mut labels = Vec::new();
         for (idx, entry) in entries.enumerate() {
-            let entry_str = entry.iter().map(|x| &x.0).join("-");
-            let label = entry.iter().map(|x| &x.1).join(" ");
+            let entry_str = entry.iter().map(|x| &x.1).join("-");
+            let label = entry.iter().map(|x| &x.2).join(" ");
             order.insert(entry_str.clone(), idx);
             labels.push(label);
         }
@@ -886,9 +972,7 @@ impl FioBwOverTime {
         );
 
         let trace_file = data_path.join(group_dir).join("trace.out");
-        debug!("{trace_file:?}");
         if trace_file.exists() {
-            debug!("Parsing trace file {:?}", trace_file);
             let trace = common::util::parse_trace(
                 &std::fs::File::open(&trace_file)?,
                 &config.fs.clone().unwrap(),

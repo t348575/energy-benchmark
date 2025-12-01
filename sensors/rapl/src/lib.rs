@@ -82,7 +82,6 @@ impl InternalRapl {
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct RaplConfig;
 
 #[typetag::serde]
@@ -95,7 +94,6 @@ impl SensorArgs for RaplConfig {
 const RAPL_FILENAME: &str = "rapl.csv";
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct Rapl;
 
 impl Sensor for Rapl {
@@ -120,20 +118,22 @@ impl Sensor for Rapl {
 
         let args = args.clone();
         let handle = spawn(async move {
-            if let Err(err) = blocking_sensor_reader(
-                rx,
-                tx,
-                RAPL_FILENAME,
-                args,
-                init_rapl,
-                |args, sensor, _, last_time| -> Result<Vec<f64>, SensorError> {
-                    read_rapl(args, sensor, last_time)
-                },
-            ) {
-                error!("{err:#?}");
-                return Err(err);
-            }
-            Ok(())
+            tokio::task::block_in_place(move || {
+                if let Err(err) = blocking_sensor_reader(
+                    rx,
+                    tx,
+                    RAPL_FILENAME,
+                    args,
+                    init_rapl,
+                    |args, sensor, _, last_time| -> Result<Vec<f64>, SensorError> {
+                        read_rapl(args, sensor, last_time)
+                    },
+                ) {
+                    error!("{err:#?}");
+                    return Err(err);
+                }
+                Ok(())
+            })
         });
         Ok(handle)
     }

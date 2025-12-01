@@ -2,7 +2,7 @@ use std::{collections::HashSet, path::PathBuf};
 
 use clap::{Parser, Subcommand};
 use common::{bench::BenchInfo, config::Config, plot::PlotType};
-use eyre::{Result, bail};
+use eyre::{Context, Result, bail};
 use regex::Regex;
 use tokio::fs::{create_dir_all, read_dir, read_to_string, remove_dir_all};
 use tracing::error;
@@ -67,8 +67,14 @@ enum Commands {
     },
     /// Generate info.json for ideal run
     GenerateInfo {
-        #[arg(short, long, default_value = "config.yaml")]
-        config_file: String,
+        #[arg(short, long)]
+        folder: String,
+        #[arg(long)]
+        device_power_states: Option<String>,
+        #[arg(long)]
+        cpu_freq_limits: Option<String>,
+        #[arg(long)]
+        cpu_topology: Option<String>,
     },
 }
 
@@ -127,7 +133,12 @@ async fn main() -> Result<()> {
             Err(err) => println!("{config_file}: {err:#?}"),
         },
         Commands::Estimate { config_file } => estimate_runtime(&config_file).await?,
-        Commands::GenerateInfo { config_file } => generate_info(&config_file).await?,
+        Commands::GenerateInfo {
+            folder,
+            device_power_states,
+            cpu_freq_limits,
+            cpu_topology,
+        } => generate_info(&folder, device_power_states, cpu_freq_limits, cpu_topology).await?,
     }
     Ok(())
 }
@@ -198,8 +209,11 @@ async fn plot(folder: &str) -> Result<()> {
         serde_yml::from_str(&read_to_string(base_path.join("config.yaml")).await?)?;
     let data_path = base_path.join("data");
 
-    let bench_info: BenchInfo =
-        serde_json::from_str(&read_to_string(base_path.join("info.json")).await?)?;
+    let bench_info: BenchInfo = serde_json::from_str(
+        &read_to_string(base_path.join("info.json"))
+            .await
+            .context(format!("Reading {}", base_path.join("info.json").display()))?,
+    )?;
 
     for experiment in &config.benches {
         let dir_regex = Regex::new(&format!("^{}-ps(?:-1|[0-4])-\\S+$", experiment.name))?;
