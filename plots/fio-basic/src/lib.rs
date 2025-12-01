@@ -30,7 +30,6 @@ use tokio::fs::read_to_string;
 use tracing::debug;
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct FioBasic {
     pub variables: Vec<String>,
     pub x_label: String,
@@ -40,14 +39,12 @@ pub struct FioBasic {
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct MatchedLabelEntry {
     pub label: String,
     pub items: Vec<usize>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct Group {
     pub filter: String,
     pub name: String,
