@@ -885,7 +885,6 @@ fn mean_p99_latency(x: &Job) -> f64 {
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct FioBwOverTime {
     variable: String,
 }
