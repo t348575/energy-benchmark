@@ -1182,7 +1182,30 @@ pub struct SectionStats {
     pub power_mean: Option<f64>,
     pub power_stddev: Option<f64>,
     pub power_stddev_rolling_100ms: Option<f64>,
+    pub power_percentiles: Option<[f64; 6]>,
     pub energy: Option<f64>,
+}
+
+
+fn percentile(sorted: &[f64], q: f64) -> f64 {
+    let n = sorted.len();
+    if n == 0 {
+        return f64::NAN;
+    }
+    if n == 1 {
+        return sorted[0];
+    }
+
+    let idx = q * (n as f64 - 1.0);
+    let lo = idx.floor() as usize;
+    let hi = idx.ceil() as usize;
+
+    if lo == hi {
+        sorted[lo]
+    } else {
+        let w = idx - lo as f64;
+        sorted[lo] * (1.0 - w) + sorted[hi] * w
+    }
 }
 
 pub fn power_energy_calculator(data: &[(usize, Vec<f64>)]) -> SectionStats {
@@ -1271,10 +1294,23 @@ pub fn power_energy_calculator(data: &[(usize, Vec<f64>)]) -> SectionStats {
         None
     };
 
+    let mut sorted = powers.iter().map(|x| x.1).collect::<Vec<_>>();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+    let p10 = percentile(&sorted, 0.10);
+    let p25 = percentile(&sorted, 0.25);
+    let p50 = percentile(&sorted, 0.50);
+    let p75 = percentile(&sorted, 0.75);
+    let p90 = percentile(&sorted, 0.90);
+    let p99 = percentile(&sorted, 0.99);
+
+    let power_percentiles = Some([p10, p25, p50, p75, p90, p99]);
+
     SectionStats {
         power_mean: mean,
         power_stddev: stddev,
         power_stddev_rolling_100ms,
+        power_percentiles,
         energy,
     }
 }

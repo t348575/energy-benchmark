@@ -160,6 +160,33 @@ impl Bench for Fio {
             }
         }
 
+        if let Some(matched) = &self.matched_args {
+            for item in matched {
+                let match_str = item.key.split_once("[").unwrap();
+                let requested_idx = match_str.1.trim_end_matches("]").parse::<usize>()?;
+                match match_str.0 {
+                    "request_sizes" => if requested_idx >= self.request_sizes.len() {
+                        bail!("Matched request_sizes index out of bounds");
+                    }
+                    "io_engines" => if requested_idx >= self.io_engines.len() {
+                        bail!("Matched io_engines index out of bounds");
+                    }
+                    "io_depths" => if requested_idx >= self.io_depths.len() {
+                        bail!("Matched io_depths index out of bounds");
+                    }
+                    "num_jobs" => if requested_idx >= jobs_vec.len() {
+                        bail!("Matched num_jobs index out of bounds");
+                    }
+                    "extra_options" => if let Some(extra_options) = &self.extra_options
+                        && requested_idx >= extra_options.len()
+                    {
+                        bail!("Matched extra_options index out of bounds");
+                    }
+                    _ => bail!("Unknown matched key: {}", match_str.0),
+                }
+            }
+        }
+
         let extra_options = self.extra_options.clone();
         let extra_options_vec = extra_options.unwrap_or(vec![vec!["--unit_base=0".to_owned()]]);
         let filename = self.filename.clone().unwrap_or(settings.device.clone());
@@ -367,6 +394,7 @@ impl Bench for Fio {
         let final_path_str = final_results_dir.to_str().unwrap();
         args.push(format!("--output={final_path_str}/results.json"));
         args.push(format!("--write_bw_log={final_path_str}/log"));
+        args.push(format!("--write_lat_log={final_path_str}/log"));
     }
 
     fn add_env(&self, bench_args: &dyn BenchArgs) -> Result<HashMap<String, String>> {

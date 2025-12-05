@@ -206,7 +206,7 @@ async fn plot(folder: &str) -> Result<()> {
     _ = remove_dir_all(&plot_path).await;
     create_dir_all(&plot_path).await?;
     let config: Config =
-        serde_yml::from_str(&read_to_string(base_path.join("config.yaml")).await?)?;
+        serde_yml::from_str(&read_to_string(base_path.join("config.yaml")).await?).context(format!("Reading config.yaml: {}", base_path.display()))?;
     let data_path = base_path.join("data");
 
     let bench_info: BenchInfo = serde_json::from_str(

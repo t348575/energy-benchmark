@@ -180,6 +180,14 @@ impl Plot for CmdBasic {
             (
                 ready_entries.clone(),
                 settings,
+                power_dir.join(format!("{experiment_name}-stdev-ssd.pdf")),
+                "power",
+                "",
+                |data| data.ssd_power.power_stddev.unwrap(),
+            ),
+            (
+                ready_entries.clone(),
+                settings,
                 power_dir.join(format!("{experiment_name}-freq.pdf")),
                 "freq",
                 "CPU",
