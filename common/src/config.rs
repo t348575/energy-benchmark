@@ -49,19 +49,20 @@ pub struct Settings {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Cgroup {
-    pub io: CgroupIo,
-    pub cpuset: CgroupCpuSet,
+    pub io: Option<CgroupIo>,
+    pub cpuset: Option<CgroupCpuSet>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CgroupCpuSet {
-    pub cpus: Option<Vec<CpuRange>>,
+    pub cpus: Option<Vec<CgroupRange>>,
+    pub mems: Option<Vec<CgroupRange>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct CpuRange(u32, Option<u32>);
+pub struct CgroupRange(u32, Option<u32>);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -181,15 +182,41 @@ impl OptionalRwIos {
 }
 
 impl Cgroup {
-    pub async fn apply<P: AsRef<Path>, S: AsRef<str>>(&self, cg_path: P, device: S) -> Result<()> {
-        self.io.apply(&cg_path, device).await?;
-        self.cpuset.apply(cg_path).await
+    pub async fn apply<P: AsRef<Path>, S: AsRef<str>>(
+        &self,
+        cg_path: P,
+        device: S,
+        apply_qos_model: bool,
+    ) -> Result<()> {
+        if let Some(io) = &self.io {
+            io.apply(&cg_path, device, apply_qos_model).await?;
+        }
+
+        if let Some(cpuset) = &self.cpuset {
+            cpuset.apply(&cg_path).await?;
+        }
+        Ok(())
     }
 }
 
 impl CgroupCpuSet {
     pub async fn apply<P: AsRef<Path>>(&self, cg_path: P) -> Result<()> {
         let base = cg_path.as_ref();
+        if let Some(mems) = &self.mems {
+            let mem_str = mems
+                .iter()
+                .map(|x| {
+                    if x.1.is_some() {
+                        format!("{}-{}", x.0, x.1.as_ref().unwrap())
+                    } else {
+                        format!("{}", x.0)
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            write_one_line(base.join("cpuset.mems"), &mem_str).await?;
+        }
+
         if let Some(cpus) = &self.cpus {
             let cpu_str = cpus
                 .iter()
@@ -209,11 +236,17 @@ impl CgroupCpuSet {
 }
 
 impl CgroupIo {
-    pub async fn apply<P: AsRef<Path>, S: AsRef<str>>(&self, cg_path: P, device: S) -> Result<()> {
+    pub async fn apply<P: AsRef<Path>, S: AsRef<str>>(
+        &self,
+        cg_path: P,
+        device: S,
+        apply_qos_model: bool,
+    ) -> Result<()> {
         let base = cg_path.as_ref();
 
-        let mut cmd = format!("{} ", device.as_ref());
+        let cmd = format!("{} ", device.as_ref().trim());
         if let Some(max) = &self.max {
+            let mut cmd = cmd.clone();
             if let Some(bps) = &max.bps {
                 cmd.write_str(&bps.fmt(("rbps", "wbps"))?)?;
             }
@@ -228,48 +261,52 @@ impl CgroupIo {
         }
 
         if let Some(weight) = self.weight {
+            let mut cmd = cmd.clone();
             write!(&mut cmd, " {weight}")?;
             write_one_line(base.join("io.weight"), &cmd).await?;
         }
 
         if let Some(latency) = self.latency {
+            let mut cmd = cmd.clone();
             write!(&mut cmd, " {latency}")?;
             write_one_line(base.join("io.latency"), &cmd).await?;
         }
 
+        if !apply_qos_model {
+            return Ok(());
+        }
+
         if let Some(cost) = &self.cost {
             if let Some(qos) = &cost.qos {
+                let mut cmd = format!("{cmd} enable=1 ctrl=user ");
                 match qos {
-                    CgroupIoCostQos::Auto => {
-                        write_one_line(base.parent().unwrap().join("io.cost.qos"), "auto").await?
-                    }
+                    CgroupIoCostQos::Auto => {}
                     CgroupIoCostQos::User {
                         pct,
                         latency: lat,
                         scaling,
                     } => {
                         cmd.write_str(&pct.fmt(("rpct", "wpct")))?;
-                        cmd.write_str(&lat.fmt(("rlat", "wlat")))?;
-                        cmd.write_str(&scaling.fmt())?;
-                        write_one_line(base.parent().unwrap().join("io.cost.qos"), "user").await?;
+                        write!(&mut cmd, " {}", &lat.fmt(("rlat", "wlat")))?;
+                        write!(&mut cmd, " {}", &scaling.fmt())?;
+                        write_one_line(base.parent().unwrap().join("io.cost.qos"), &cmd).await?;
                     }
                 }
             }
 
             if let Some(model) = &cost.model {
+                let mut cmd = cmd.clone();
                 match model {
-                    CgroupIoCostModel::Auto => {
-                        write_one_line(base.parent().unwrap().join("io.cost.model"), "auto").await?
-                    }
+                    CgroupIoCostModel::Auto => {}
                     CgroupIoCostModel::User {
                         bps,
                         seqiops,
                         randiops,
                     } => {
                         cmd.write_str(&bps.fmt(("rbps", "wbps")))?;
-                        cmd.write_str(&seqiops.fmt(("rseqiops", "wseqiops")))?;
-                        cmd.write_str(&randiops.fmt(("rrandiops", "wrandiops")))?;
-                        write_one_line(base.parent().unwrap().join("io.cost.model"), "user")
+                        write!(&mut cmd, " {}", &seqiops.fmt(("rseqiops", "wseqiops")))?;
+                        write!(&mut cmd, " {}", &randiops.fmt(("rrandiops", "wrandiops")))?;
+                        write_one_line(base.parent().unwrap().join("io.cost.model"), &cmd)
                             .await
                             .context("Write io.cost.model file")?;
                     }

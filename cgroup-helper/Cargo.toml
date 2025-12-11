@@ -1,0 +1,11 @@
+[package]
+name = "cgroup-helper"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+common.workspace = true
+tokio.workspace = true
+eyre.workspace = true
+serde_yml = "0.0.12"
+clap = { version = "4", features = ["derive"] }

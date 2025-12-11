@@ -1186,7 +1186,6 @@ pub struct SectionStats {
     pub energy: Option<f64>,
 }
 
-
 fn percentile(sorted: &[f64], q: f64) -> f64 {
     let n = sorted.len();
     if n == 0 {
@@ -1375,7 +1374,7 @@ pub async fn chown_user(dir: &Path) -> Result<()> {
         "chown",
         &[
             "-R",
-            &std::env::var("SUDO_USER").context("energy-benchmark expectes to be run with sudo")?,
+            &std::env::var("SUDO_USER").context("nvme-energy-bench expectes to be run with sudo")?,
             dir.to_str().unwrap(),
         ],
     )

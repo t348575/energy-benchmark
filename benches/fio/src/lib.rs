@@ -165,22 +165,32 @@ impl Bench for Fio {
                 let match_str = item.key.split_once("[").unwrap();
                 let requested_idx = match_str.1.trim_end_matches("]").parse::<usize>()?;
                 match match_str.0 {
-                    "request_sizes" => if requested_idx >= self.request_sizes.len() {
-                        bail!("Matched request_sizes index out of bounds");
+                    "request_sizes" => {
+                        if requested_idx >= self.request_sizes.len() {
+                            bail!("Matched request_sizes index out of bounds");
+                        }
                     }
-                    "io_engines" => if requested_idx >= self.io_engines.len() {
-                        bail!("Matched io_engines index out of bounds");
+                    "io_engines" => {
+                        if requested_idx >= self.io_engines.len() {
+                            bail!("Matched io_engines index out of bounds");
+                        }
                     }
-                    "io_depths" => if requested_idx >= self.io_depths.len() {
-                        bail!("Matched io_depths index out of bounds");
+                    "io_depths" => {
+                        if requested_idx >= self.io_depths.len() {
+                            bail!("Matched io_depths index out of bounds");
+                        }
                     }
-                    "num_jobs" => if requested_idx >= jobs_vec.len() {
-                        bail!("Matched num_jobs index out of bounds");
+                    "num_jobs" => {
+                        if requested_idx >= jobs_vec.len() {
+                            bail!("Matched num_jobs index out of bounds");
+                        }
                     }
-                    "extra_options" => if let Some(extra_options) = &self.extra_options
-                        && requested_idx >= extra_options.len()
-                    {
-                        bail!("Matched extra_options index out of bounds");
+                    "extra_options" => {
+                        if let Some(extra_options) = &self.extra_options
+                            && requested_idx >= extra_options.len()
+                        {
+                            bail!("Matched extra_options index out of bounds");
+                        }
                     }
                     _ => bail!("Unknown matched key: {}", match_str.0),
                 }
@@ -222,7 +232,7 @@ impl Bench for Fio {
                 matched_args: self.matched_args.clone(),
                 directory: self.directory.clone(),
                 open_dir: self.open_dir.clone(),
-                prefill: None
+                prefill: None,
             };
 
             (req_idx, eng_idx, depth_idx, job_idx, extra_idx, bench)
@@ -349,7 +359,7 @@ impl Bench for Fio {
                 }
 
                 if settings.cgroup.is_some() {
-                    args.push("--cgroup=energy-benchmark".to_owned());
+                    args.push("--cgroup=nvme-energy-bench".to_owned());
                 }
 
                 if spdk && let Some(numa) = &settings.numa {
@@ -581,7 +591,7 @@ impl Fio {
             matched_args: None,
             directory: None,
             open_dir: None,
-            prefill: None
+            prefill: None,
         };
 
         let bench_args: Box<dyn BenchArgs> = 'outer: {

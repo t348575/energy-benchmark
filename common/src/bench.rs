@@ -144,7 +144,7 @@ pub trait Bench: Debug + DynClone + Downcast + Send + Sync {
         }
 
         let mut cmd = Command::new(program);
-        let cgroup_path = "/sys/fs/cgroup/energy-benchmark";
+        let cgroup_path = "/sys/fs/cgroup/nvme-energy-bench";
         if let Some(cgroup) = &settings.cgroup {
             _ = remove_dir(cgroup_path).await;
             create_dir_all(cgroup_path).await?;
@@ -153,7 +153,17 @@ pub trait Bench: Debug + DynClone + Downcast + Send + Sync {
                 .strip_prefix("/dev/")
                 .context("Device does not include /dev")?;
             let device = read_to_string(format!("/sys/block/{device}/dev")).await?;
-            cgroup.apply(cgroup_path, device.trim()).await?;
+            cgroup
+                .apply(
+                    cgroup_path,
+                    device.trim(),
+                    if _last_experiment.is_none() {
+                        true
+                    } else {
+                        false
+                    },
+                )
+                .await?;
         }
 
         if settings.cgroup.is_some() && !self.internal_cgroup() {
@@ -233,7 +243,7 @@ pub trait Bench: Debug + DynClone + Downcast + Send + Sync {
     }
 
     /// Returns true if the benchmark will perform write operations
-    /// This is used to determine if energy-benchmark should sleep based on [`Settings::sleep_after_writes`]
+    /// This is used to determine if nvme-energy-bench should sleep based on [`Settings::sleep_after_writes`]
     fn write_hint(&self) -> bool;
 }
 clone_trait_object!(Bench);

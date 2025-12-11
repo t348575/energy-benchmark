@@ -412,7 +412,19 @@ impl Plot for FioBasic {
         let plotter = self.clone().into();
         let results = plot_jobs
             .into_par_iter()
-            .map(|x| self.bar_plot(x.0, x.1, x.2, x.3, x.4, x.5, bench_info, config_yaml, &plotter))
+            .map(|x| {
+                self.bar_plot(
+                    x.0,
+                    x.1,
+                    x.2,
+                    x.3,
+                    x.4,
+                    x.5,
+                    bench_info,
+                    config_yaml,
+                    &plotter,
+                )
+            })
             .collect::<Vec<_>>();
         for item in results {
             item?;
@@ -424,7 +436,7 @@ impl Plot for FioBasic {
             settings,
             &efficiency_dir,
             config_yaml,
-            &plotter
+            &plotter,
         )
         .await?;
 
@@ -681,7 +693,7 @@ impl FioBasic {
         settings: &Settings,
         plot_path: &Path,
         config: &Config,
-        plotter: &FioPlotter
+        plotter: &FioPlotter,
     ) -> Result<()> {
         let num_power_states = settings.nvme_power_states.clone().unwrap_or(vec![0]).len();
         let (order, labels) = plotter.get_order_labels(config, &ready_entries);
@@ -836,7 +848,7 @@ impl FioBasic {
         get_mean: fn(&PlotEntry) -> f64,
         bench_info: &BenchInfo,
         config: &Config,
-        plotter: &FioPlotter
+        plotter: &FioPlotter,
     ) -> Result<()> {
         let num_power_states = settings.nvme_power_states.clone().unwrap_or(vec![0]).len();
         let mut results = vec![vec![]; num_power_states];

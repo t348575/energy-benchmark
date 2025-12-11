@@ -38,6 +38,8 @@ enum Commands {
         /// Do not generate plots
         #[arg(long, default_value_t = false)]
         skip_plot: bool,
+        #[arg(long)]
+        use_dir: Option<String>,
     },
     /// Generate plots for benchmarks
     Plot {
@@ -119,8 +121,10 @@ async fn main() -> Result<()> {
         Commands::Bench {
             config_file,
             skip_plot,
+            use_dir,
         } => {
-            if let Err(err) = run_benchmark(config_file, args.no_progress, skip_plot).await {
+            if let Err(err) = run_benchmark(config_file, args.no_progress, skip_plot, use_dir).await
+            {
                 error!("{err:#?}");
                 return Err(err);
             }
@@ -205,8 +209,8 @@ async fn plot(folder: &str) -> Result<()> {
     let plot_path = base_path.join("plots");
     _ = remove_dir_all(&plot_path).await;
     create_dir_all(&plot_path).await?;
-    let config: Config =
-        serde_yml::from_str(&read_to_string(base_path.join("config.yaml")).await?).context(format!("Reading config.yaml: {}", base_path.display()))?;
+    let config: Config = serde_yml::from_str(&read_to_string(base_path.join("config.yaml")).await?)
+        .context(format!("Reading config.yaml: {}", base_path.display()))?;
     let data_path = base_path.join("data");
 
     let bench_info: BenchInfo = serde_json::from_str(

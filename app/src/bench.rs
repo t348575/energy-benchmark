@@ -32,7 +32,12 @@ use tokio::{
 };
 use tracing::{debug, error, info, warn};
 
-pub async fn run_benchmark(config_file: String, no_progress: bool, skip_plot: bool) -> Result<()> {
+pub async fn run_benchmark(
+    config_file: String,
+    no_progress: bool,
+    skip_plot: bool,
+    use_dir: Option<String>,
+) -> Result<()> {
     let config: Config = serde_yml::from_str(&read_to_string(&config_file).await?)?;
     let unique_bench_names = config
         .benches
@@ -106,7 +111,11 @@ pub async fn run_benchmark(config_file: String, no_progress: bool, skip_plot: bo
     }
 
     debug!("Loaded sensors: {loaded_sensors:?}");
-    let results_path = PathBuf::from("results").join(format!("{}-{file_prefix}", config.name));
+    let results_path = match use_dir {
+        Some(use_dir) => PathBuf::from(use_dir),
+        None => PathBuf::from("results").join(format!("{}-{file_prefix}", config.name)),
+    };
+
     let data_path = results_path.join("data");
     create_dir_all(&results_path).await?;
     let plot_path = results_path.join("plots");

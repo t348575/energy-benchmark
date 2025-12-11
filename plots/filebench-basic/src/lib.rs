@@ -36,6 +36,7 @@ struct PlotEntry {
     args: Filebench,
     ssd_power: SectionedCalculation,
     cpu_power: SectionedCalculation,
+    server_power: SectionedCalculation,
     _times: [usize; 4],
 }
 
@@ -75,6 +76,7 @@ impl Plot for FilebenchBasic {
                     read_json_file::<FilebenchSummary>(run_dir.join("results.json")).await,
                     read_to_string(run_dir.join("powersensor3.csv")).await,
                     read_to_string(run_dir.join("rapl.csv")).await,
+                    read_to_string(run_dir.join("netio-http.csv")).await,
                     read_to_string(run_dir.join("markers.csv")).await,
                     dir,
                     info,
@@ -85,10 +87,11 @@ impl Plot for FilebenchBasic {
         let ready_entries = entries
             .into_par_iter()
             .map(|item| {
-                let (json, powersensor3, rapl, markers, _dir, info) = item;
+                let (json, powersensor3, rapl, system, markers, _dir, info) = item;
                 let markers = markers.context("Read markers").unwrap();
                 let rapl = rapl.context("Read rapl").unwrap();
                 let powersensor3 = powersensor3.context("Read powersensor3").unwrap();
+                let system = system.context("Read system power").unwrap();
 
                 let (rapl_means, rapl_overall, _) = calculate_sectioned::<_, 4>(
                     Some(&markers),
@@ -99,6 +102,7 @@ impl Plot for FilebenchBasic {
                 )
                 .context("Calculate rapl means")
                 .unwrap();
+
                 let (powersensor3_means, ps3_overall, times) = calculate_sectioned::<_, 4>(
                     Some(&markers),
                     &powersensor3,
@@ -107,6 +111,16 @@ impl Plot for FilebenchBasic {
                     power_energy_calculator,
                 )
                 .context("Calculate powersensor3 means")
+                .unwrap();
+
+                let (system_means, system_overall, _) = calculate_sectioned::<_, 4>(
+                    Some(&markers),
+                    &system,
+                    &[r#"load-\S+"#],
+                    &[(0.0, settings.cpu_max_power_watts * 2.0)],
+                    power_energy_calculator,
+                )
+                .context("Calculate system power means")
                 .unwrap();
 
                 PlotEntry {
@@ -124,6 +138,12 @@ impl Plot for FilebenchBasic {
                         init: rapl_means[0],
                         benchmark: rapl_means[1],
                         post_benchmark: rapl_means[2],
+                    },
+                    server_power: SectionedCalculation {
+                        overall: system_overall,
+                        init: system_means[0],
+                        benchmark: system_means[1],
+                        post_benchmark: system_means[2],
                     },
                     _times: times,
                 }
@@ -367,6 +387,8 @@ impl FilebenchBasic {
         let mut iops_j_overall = vec![vec![0f64; num_power_states]; order.len()];
         let mut iops_j_init = iops_j_overall.clone();
         let mut iops_j_benchmark = iops_j_overall.clone();
+        let mut iops_j_benchmark_cpu = iops_j_overall.clone();
+        let mut iops_j_benchmark_server = iops_j_overall.clone();
         let mut iops_j_post_benchmark = iops_j_overall.clone();
         let mut edp = iops_j_overall.clone();
         let mut bytes_j_overall = iops_j_overall.clone();
@@ -402,6 +424,8 @@ impl FilebenchBasic {
                     iops / item.ssd_power.overall.power_mean.unwrap(),
                     iops / item.ssd_power.init.power_mean.unwrap(),
                     iops / item.ssd_power.benchmark.power_mean.unwrap(),
+                    iops / item.cpu_power.benchmark.power_mean.unwrap(),
+                    iops / item.server_power.benchmark.power_mean.unwrap(),
                     iops / item.ssd_power.post_benchmark.power_mean.unwrap(),
                     bytes / item.ssd_power.overall.power_mean.unwrap(),
                     bytes / item.ssd_power.init.power_mean.unwrap(),
@@ -417,12 +441,14 @@ impl FilebenchBasic {
             iops_j_overall[x][y] = item.2;
             iops_j_init[x][y] = item.3;
             iops_j_benchmark[x][y] = item.4;
-            iops_j_post_benchmark[x][y] = item.5;
-            bytes_j_overall[x][y] = item.6;
-            bytes_j_init[x][y] = item.7;
-            bytes_j_benchmark[x][y] = item.8;
-            bytes_j_post_benchmark[x][y] = item.9;
-            edp[x][y] = item.10;
+            iops_j_benchmark_cpu[x][y] = item.5;
+            iops_j_benchmark_server[x][y] = item.6;
+            iops_j_post_benchmark[x][y] = item.7;
+            bytes_j_overall[x][y] = item.8;
+            bytes_j_init[x][y] = item.9;
+            bytes_j_benchmark[x][y] = item.10;
+            bytes_j_post_benchmark[x][y] = item.11;
+            edp[x][y] = item.12;
         }
 
         let jobs = vec![
@@ -438,6 +464,21 @@ impl FilebenchBasic {
                 data: iops_j_init,
                 title: "IOPS/J",
                 x_label: "init",
+                reverse: false,
+            },
+            HeatmapJob {
+                filepath: plot_path.join(format!("{}-iops-j-cpu-benchmark.pdf", &experiment_name)),
+                data: iops_j_benchmark_cpu,
+                title: "IOPS/J",
+                x_label: "benchmark",
+                reverse: false,
+            },
+            HeatmapJob {
+                filepath: plot_path
+                    .join(format!("{}-iops-j-server-benchmark.pdf", &experiment_name)),
+                data: iops_j_benchmark_server,
+                title: "IOPS/J",
+                x_label: "benchmark",
                 reverse: false,
             },
             HeatmapJob {
