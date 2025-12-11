@@ -1,8 +1,8 @@
-# energy-benchmark ![Visits](https://lambda.348575.xyz/repo-view-counter?repo=energy-benchmark)
+# nvme-energy-bench ![Visits](https://lambda.348575.xyz/repo-view-counter?repo=nvme-energy-bench)
 A tool to automate NVMe SSD energy-performance benchmarks, originally done for my [M.Sc. Thesis](https://atlarge-research.com/pdfs/kanichai2025thesis.pdf).
 
 ## Setup
-1. Clone the repository https://github.com/t348575/energy-benchmark
+1. Clone the repository https://github.com/t348575/nvme-energy-bench
 2. Configure [setup.toml](setup.toml) with the benchmarks, sensors and plotters you require (just the name)
 #### Example:
 ```toml
@@ -15,9 +15,9 @@ features = ["prefill"] # activate a cargo feature for this benchmark
 ```
 3. Ensure all dependencies required for the benchmark runners, sensors & plotters are installed (check respective directories for README)
 4. Run `cargo build` (populates dependencies from setup.toml)
-5. Run `cargo build --release -p energy-benchmark` (built executable in `target/release/`)
+5. Run `cargo build --release -p nvme-energy-bench` (built executable in `target/release/`)
 6. Ensure `python3` is installed if you are generating any plots, preferably create a virtual env as well.
-7. Setup a `config.yaml` benchmark configuration file as shown below, then run using: `sudo target/release/energy-benchmark bench`
+7. Setup a `config.yaml` benchmark configuration file as shown below, then run using: `sudo target/release/nvme-energy-bench bench`
 
 **Note 1**: Always run the benchmark using sudo, and from the repository root.
 
@@ -44,36 +44,40 @@ settings:
   cpu_freq:                                     # Optional, Limit CPU frequency.
     freq: 1200000
     default_governor: schedutil                 # Default frequency governor to return to after the benchmark
-  cgroup_io:                                    # Optional, Use Cgroup v2 IO limits.
-    max:                                        # Optional, io.max.
-      bps:                                      # specify bps or iops
-        r: 629145600
-        w: 629145600
-    weight: 200                                 # Optional, io.weight.
-    latency: 50                                 # Optional, io.latency.
-    cost:
-      qos: Auto                                 # Optional, io.cost.qos, specify Auto or User.
-      # qos: !User
-      #   pct:
-      #     r: 45
-      #     w: 65
-      #   latency:
-      #     r: 10
-      #     w: 30
-      #   scaling:
-      #     min: 10
-      #     max: 85
-      model: Auto                               # Optional, io.cost.model, specify Auto or User.
-      # model: !User
-      #   bps:
-      #     r: 629145600
-      #     w: 104857600
-      #   seqiops:
-      #     r: 1000
-      #     w: 5000
-      #   randiops:
-      #     r: 10000
-      #     w: 10000
+  cgroup:                                       # Optional, Use Cgroup v2 IO limits.
+    cpuset:                                     # Optional
+      cpus: [[10, 20]]                          # Optional specify cgroup cpu range
+      mems: [[1, null]]                         # Optional, specify memory numa range
+    io:                                         # Optional
+      max:                                      # Optional, io.max.
+        bps:                                    # specify bps or iops
+          r: 629145600
+          w: 629145600
+      weight: 200                               # Optional, io.weight.
+      latency: 50                               # Optional, io.latency.
+      cost:
+        qos: Auto                               # Optional, io.cost.qos, specify Auto or User.
+        # qos: !User
+        #   pct:
+        #     r: 45
+        #     w: 65
+        #   latency:
+        #     r: 10
+        #     w: 30
+        #   scaling:
+        #     min: 10
+        #     max: 85
+        model: Auto                             # Optional, io.cost.model, specify Auto or User.
+        # model: !User
+        #   bps:
+        #     r: 629145600
+        #     w: 104857600
+        #   seqiops:
+        #     r: 1000
+        #     w: 5000
+        #   randiops:
+        #     r: 10000
+        #     w: 10000
 
 
 bench_args:                                     # Global arguments for benchmarks, always suffixed with `Config` consult specific benchmark README
