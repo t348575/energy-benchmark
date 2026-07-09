@@ -1,5 +1,5 @@
 # nvme-energy-bench ![Visits](https://lambda.348575.xyz/repo-view-counter?repo=nvme-energy-bench)
-A tool to automate NVMe SSD energy-performance benchmarks, originally done for my [M.Sc. Thesis](https://atlarge-research.com/pdfs/kanichai2025thesis.pdf).
+A tool to automate NVMe SSD energy-performance benchmarks, originally done for my M.Sc. thesis [_Characterizing The Energy Contribution and Energy-Performance Trade-offs of NVMe SSDs in the Linux Storage Stack_](https://atlarge-research.com/pdfs/kanichai2025thesis.pdf).
 
 ## Setup
 1. Clone the repository https://github.com/t348575/nvme-energy-bench
