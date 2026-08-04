@@ -1,0 +1,6 @@
+benches = ["fio"]
+sensors = ["diskstat", "netio-http", "powersensor3", "rapl", "sysinfo"]
+plots = ["fio-basic"]
+
+[powersensor3]
+default-features = false
