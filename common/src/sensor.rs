@@ -37,6 +37,7 @@ pub trait Sensor: Debug + Send + Sync {
     ///
     /// Arguments:
     /// * `args` - Specific arguments to the sensor
+    /// * `settings` - Global settings from the config file
     /// * `rx` - Requests to the sensor to start/stop recording
     /// * `tx` - Replies from the sensor when its done flushing data to disk, after [`SensorRequest::StopRecording`] is received
     fn start(

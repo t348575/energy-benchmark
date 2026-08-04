@@ -13,7 +13,7 @@ use common::{
         read_json_file, write_csv,
     },
 };
-use eyre::{Context, Result, bail};
+use eyre::{Context, Result, eyre};
 use filebench::{Filebench, result::FilebenchSummary};
 use futures::future::join_all;
 use itertools::Itertools;
@@ -370,7 +370,7 @@ impl FilebenchBasic {
             "throughput" => BarChartKind::Throughput,
             "latency" => BarChartKind::Latency,
             "power" => BarChartKind::Power,
-            other => bail!("Unsupported plotting file {other}"),
+            other => return Err(eyre!("Unsupported plotting file {other}")),
         };
         let config = make_power_state_bar_config(chart_kind, x_label, &experiment_name, y_name);
         plot_bar_chart(&filepath, results, labels, config, bench_info)

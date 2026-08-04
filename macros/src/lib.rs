@@ -91,8 +91,12 @@ pub fn if_sensor(input: TokenStream) -> TokenStream {
 
 #[proc_macro]
 pub fn sensor_kind(_: TokenStream) -> TokenStream {
-    let config: BuildConfig =
+    let mut config: BuildConfig =
         toml::from_str(&std::fs::read_to_string("setup.toml").unwrap()).unwrap();
+
+    if config.sensors.is_empty() {
+        config.sensors = vec!["blank".to_string()];
+    }
 
     let sensors_caps = config
         .sensors

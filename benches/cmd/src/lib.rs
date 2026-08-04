@@ -49,6 +49,10 @@ impl Bench for Cmd {
         self.write_hint
     }
 
+    fn internal_cgroup(&self) -> bool {
+        true
+    }
+
     fn cmds(
         &self,
         _settings: &Settings,

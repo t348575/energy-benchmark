@@ -10,7 +10,7 @@ use common::{
         plot_bar_chart, power_energy_calculator, sysinfo_average_calculator,
     },
 };
-use eyre::{Context, Result, bail};
+use eyre::{Context, Result, eyre};
 use futures::future::join_all;
 use plot_common::impl_power_time_plot;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
@@ -251,7 +251,7 @@ impl CmdBasic {
             "power" => BarChartKind::Power,
             "freq" => BarChartKind::Freq,
             "load" => BarChartKind::Load,
-            other => bail!("Unsupported plotting file {other}"),
+            other => return Err(eyre!("Unsupported plotting file {other}")),
         };
         let config = make_power_state_bar_config(chart_kind, x_label, &experiment_name, None);
         plot_bar_chart(

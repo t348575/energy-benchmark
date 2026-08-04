@@ -16,12 +16,12 @@ use flume::Sender;
 use result::parse_output;
 use serde::{Deserialize, Serialize};
 use tokio::{
-    fs::{File, write},
+    fs::{File, write, copy},
     io::AsyncWriteExt,
     process::Command,
     time::sleep,
 };
-use tracing::debug;
+use tracing::{debug, warn};
 
 pub mod result;
 
@@ -37,6 +37,7 @@ pub struct Ycsb {
     #[cfg(feature = "prefill")]
     pub prefill: Option<String>,
     pub _ycsb_op_type: Option<OpType>,
+    pub _ycsb_db_configure_file: Option<String>,
     pub fs_mount_opts: Option<String>,
 }
 
@@ -81,6 +82,10 @@ impl Bench for Ycsb {
         Ok(0)
     }
 
+    fn write_hint(&self) -> bool {
+        true // assumption, since we have not parsed the workload file
+    }
+
     fn cmds(
         &self,
         settings: &Settings,
@@ -109,6 +114,11 @@ impl Bench for Ycsb {
 
         let mut continued_args = vec![self.db.clone(), "-P".to_owned(), self.workload_file.clone()];
 
+        let mut load_obj = self.clone();
+        load_obj._ycsb_op_type = Some(OpType::Load);
+        let mut run_obj = self.clone();
+        run_obj._ycsb_op_type = Some(OpType::Run);
+
         if let Some(threads) = self.threads {
             continued_args.push("-threads".to_owned());
             continued_args.push(threads.to_string());
@@ -117,6 +127,11 @@ impl Bench for Ycsb {
         for (k, v) in self.vars.as_ref().unwrap_or(&HashMap::new()).iter() {
             continued_args.push("-p".to_owned());
             continued_args.push(format!("{k}={v}"));
+
+            if k.eq("rocksdb.optionsfile") {
+                load_obj._ycsb_db_configure_file = Some(v.clone());
+                run_obj._ycsb_db_configure_file = Some(v.clone());
+            }
         }
 
         let mut load = args.clone();
@@ -126,11 +141,6 @@ impl Bench for Ycsb {
         let mut run = args.clone();
         run.push("run".to_owned());
         run.extend(continued_args.clone());
-
-        let mut load_obj = self.clone();
-        load_obj._ycsb_op_type = Some(OpType::Load);
-        let mut run_obj = self.clone();
-        run_obj._ycsb_op_type = Some(OpType::Run);
         let cmds = vec![
             Cmd {
                 args: load,
@@ -145,6 +155,29 @@ impl Bench for Ycsb {
         ];
 
         Ok(CmdsResult { program, cmds })
+    }
+
+    async fn experiment_init(
+        &self,
+        _data_dir: &Path,
+        _settings: &Settings,
+        _bench_args: &dyn BenchArgs,
+        _last_experiment: &Option<Box<dyn Bench>>,
+        _config: &Config,
+        final_results_dir: &Path,
+    ) -> Result<()> {
+        if let Some(db_configure_file) = &self._ycsb_db_configure_file {
+            let db_configure_path = Path::new(db_configure_file);
+            if db_configure_path.exists() {
+                copy(db_configure_path, final_results_dir.join(db_configure_path.file_name().unwrap())).await.context("Failed to copy YCSB db configure file")?;
+            } else {
+                warn!(
+                    "YCSB db configure file does not exist: {}",
+                    db_configure_path.display()
+                );
+            }
+        }
+        Ok(())
     }
 
     async fn run(

@@ -12,7 +12,7 @@ use common::{
     sensor::SensorRequest,
     util::{Filesystem, mount_fs, read_until_prompt, simple_command_with_output_no_dir},
 };
-use eyre::{Context, ContextCompat, Result, bail};
+use eyre::{Context, ContextCompat, Result, eyre};
 use flume::Sender;
 use itertools::iproduct;
 use result::{FilebenchSummary, parse_output};
@@ -312,22 +312,22 @@ impl Bench for Filebench {
             .await?;
 
         if !exit_status.success() {
-            bail!(
+            return Err(eyre!(
                 "Process exitied with {}, err: {}",
                 exit_status.code().unwrap_or_default(),
                 stderr
-            );
+            ))
         }
 
         write(final_results_dir.join("output.txt"), &stdout).await?;
         let (summary, ops_stats) = match parse_output(&stdout) {
             Ok(s) => s,
-            Err(err) => bail!(
+            Err(err) => return Err(eyre!(
                 "Failed to parse filebench output! err: {} stdout: {} stderr: {}",
                 err,
                 stdout,
                 stderr
-            ),
+            )),
         };
 
         sleep(Duration::from_secs(60)).await;

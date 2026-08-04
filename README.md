@@ -1,8 +1,8 @@
 # nvme-energy-bench ![Visits](https://lambda.348575.xyz/repo-view-counter?repo=nvme-energy-bench)
-A tool to automate NVMe SSD energy-performance benchmarks, originally done for my [M.Sc. Thesis](https://atlarge-research.com/pdfs/kanichai2025thesis.pdf).
+A tool to automate NVMe SSD energy-performance benchmarks.
 
 ## Setup
-1. Clone the repository https://github.com/t348575/nvme-energy-bench
+1. Clone this repository.
 2. Configure [setup.toml](setup.toml) with the benchmarks, sensors and plotters you require (just the name)
 #### Example:
 ```toml
@@ -115,4 +115,138 @@ benches:                                        # Benchmarks
     plots:                                      # Plotter specific arguments, consult specific plotter README
       - type: YcsbBasic
       - type: YcsbPowerTime
+```
+
+## Adding new sensors
+
+Adding new sensors involves implementing the `Sensor` trait in [common/src/sensor.rs](common/src/sensor.rs):
+```rs
+/// All [`Sensor`] implementations are expected to implement [`Default`]
+pub trait Sensor: Debug + Send + Sync {
+    /// Name of the sensor, for identification
+    fn name(&self) -> sensor_common::SensorKind;
+    /// Sensor data filename
+    fn filename(&self) -> &'static str;
+    /// Should start an async task that collects sensor data using [`tokio::task::spawn`]
+    ///
+    /// Arguments:
+    /// * `args` - Specific arguments to the sensor
+    /// * `settings` - Global settings from the config file
+    /// * `rx` - Requests to the sensor to start/stop recording
+    /// * `tx` - Replies from the sensor when its done flushing data to disk, after [`SensorRequest::StopRecording`] is received
+    fn start(
+        &self,
+        args: &dyn SensorArgs,
+        settings: &Settings,
+        rx: Receiver<SensorRequest>,
+        tx: Sender<SensorReply>,
+    ) -> Result<JoinHandle<Result<()>>>;
+}
+```
+
+The following shows the minimal implementation for an example sensor `DummySensor`. Consult the other implemented sensors to get a better idea on implmentation.
+```rs
+/// This represents sensor configuration from the YAML configuration provided under "sensors:"
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DummySensorConfig {
+  some_value: u32
+}
+
+/// This is for internal matching & serde parsing
+#[typetag::serde]
+impl SensorArgs for DummySensorConfig {
+    fn name(&self) -> SensorKind {
+        SensorKind::DummySensor
+    }
+}
+
+/// The sensor. All derives shown here are compulsory.
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DummySensor;
+
+struct InternalDummySensor {
+    some_internal_data: Vec<u32>
+}
+
+const SENSOR_FILENAME: &str = "dummy_sensor.csv";
+
+impl Sensor for DummySensor {
+  fn name(&self) -> SensorKind {
+      SensorKind::DummySensor
+  }
+
+  /// Filename for the created csv/json (or whatever).
+  fn filename(&self) -> &'static str {
+    SENSOR_FILENAME
+  }
+
+  /// This spawns a tokio async function used to poll the sensor data. If you need a dedicated thread, spawn a blocking tokio task inside a tokio async function, as done in sensors/powersensor3/src/lib.rs
+  fn start(
+    &self,
+    args: &dyn SensorArgs,
+    settings: &Settings,
+    rx: Receiver<SensorRequest>,
+    tx: Sender<SensorReply>,
+  ) -> Result<JoinHandle<Result<()>>> {
+    let args = args
+      .downcast_ref::<RaplConfig>()
+      .context("Invalid sensor args, expected args for Rapl")?;
+
+    // Required for Send/Sync.
+    let args = args.clone();
+    let handle = spawn(async move {
+      // A default sensor poller function provided in common/src/util.rs
+      // sensor_reader automatically manages sensor startup, shutdown, errors, accuratly polling the sensors, and flushing results to disk. It is recommended to directly utilize this utility function.
+      if let Err(err) = sensor_reader(
+        rx, // to handle sensor recording start/stop, shutdown.
+        tx, // to handle sensor recording start/stop, shutdown.
+        SENSOR_FILENAME,
+        args,
+        init_dummysensor, // a function to perform one time initialization for the sensor. Also returns the output columns.
+        |args, sensor, sensor_request, last_time|
+          -> std::pin::Pin<
+            Box<dyn Future<Output = Result<Vec<f64>, SensorError>> + Send>,
+        > { Box::pin(read_dummysensor(sensor.clone(), last_time)) },
+      )
+      .await
+      {
+          error!("{err:#?}");
+          return Err(err);
+      }
+      Ok(())
+    });
+    Ok(handle)
+  }
+}
+
+async fn init_dummysensor(
+  config: DummySensorConfig,
+) -> Result<(Arc<Mutex<InternalDummySensor>>, Vec<String>)> {
+  // Do any initialization work
+  Ok((
+    Arc::new(Mutex::new(InternalDummySensor {
+      some_internal_data: Vec::new()
+    })),
+    // The columns names for each value in the collected data.
+    vec![
+        "col_1",
+        "col_2",
+    ]
+    .into_iter()
+    .map(|x| x.to_owned())
+    .collect(),
+  ))
+}
+
+async fn read_dummysensor(sensor: Arc<Mutex<InternalDiskStat>>, last_time: Instant) -> Result<Vec<f64>, SensorError> {
+    let mut sensor = sensor.lock().await;
+    // Read the sensor, collect data, etc.
+    let mut readings = read_sensor_data(); // Your sensor collection logic
+    // Your sensor interval. Use async_io sleep rather than tokio sleep, since it is far more accurate than tokio sleep for small sleep intervals like 1ms.
+    async_io::Timer::after(Duration::from_micros(1000)).await;
+    // The recorded sensor data
+    Ok(readings)
+}
 ```

@@ -12,7 +12,7 @@ use std::{
 };
 
 use csv::{ReaderBuilder, StringRecord, Writer};
-use eyre::{Context, ContextCompat, Result, bail};
+use eyre::{Context, ContextCompat, Result, bail, eyre};
 use flume::{Receiver, Sender};
 use rayon::{
     iter::{IntoParallelRefIterator, ParallelIterator},
@@ -83,7 +83,7 @@ pub fn parse_data_size(request_size: &str) -> Result<u64> {
             * 1024
             * 1024)
     } else {
-        bail!("Unsupported request size {request_size}")
+        return Err(eyre!("Unsupported request size {request_size}"))
     }
 }
 
@@ -909,7 +909,7 @@ pub enum Filesystem {
 impl Filesystem {
     pub fn cmd(&self, device: &str) -> Result<String> {
         Ok(match self {
-            Filesystem::None => bail!("No filesystem specified"),
+            Filesystem::None => return Err(eyre!("No filesystem specified")),
             Filesystem::Ext4 => format!("sudo mkfs.ext4 -F -L ext4_bench {device}"),
             Filesystem::Xfs => format!("sudo mkfs.xfs -f -L xfs_bench {device}"),
             Filesystem::Btrfs => format!("sudo mkfs.btrfs -f -L btrfs_bench {device}"),

@@ -8,7 +8,7 @@ use common::{
         simple_command_with_output, simple_command_with_output_no_dir,
     },
 };
-use eyre::{ContextCompat, Result, bail};
+use eyre::{ContextCompat, Result, bail, eyre};
 use itertools::iproduct;
 use serde::{Deserialize, Serialize};
 use tokio::fs::{create_dir_all, read_to_string, write};
@@ -192,7 +192,7 @@ impl Bench for Fio {
                             bail!("Matched extra_options index out of bounds");
                         }
                     }
-                    _ => bail!("Unknown matched key: {}", match_str.0),
+                    _ => return Err(eyre!("Unknown matched key: {}", match_str.0)),
                 }
             }
         }

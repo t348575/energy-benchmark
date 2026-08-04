@@ -6,16 +6,16 @@ use std::{
 use common::{
     bench::{BenchInfo, BenchParams},
     config::{Config, Settings},
-    plot::{HeatmapJob, Plot, PlotType, collect_run_groups, ensure_plot_dirs, render_heatmaps},
+    plot::{HeatmapJob, Plot, PlotType, collect_run_groups, ensure_dirs, render_heatmaps},
     util::{
         BarChartKind, SectionStats, calculate_sectioned, make_power_state_bar_config,
         plot_bar_chart, power_energy_calculator, read_json_file,
     },
 };
-use eyre::{Context, Result, bail};
+use eyre::{Context, Result};
 use futures::future::join_all;
 use itertools::Itertools;
-use plot_common::{default_timeseries_plot, impl_power_time_plot};
+use plot_common::{impl_power_time_plot};
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
 use tokio::fs::read_to_string;
@@ -94,23 +94,21 @@ impl Plot for YcsbBasic {
                 let rapl = rapl.context("Read rapl").unwrap();
                 let powersensor3 = powersensor3.context("Read powersensor3").unwrap();
 
-                let (rapl_means, rapl_overall, _) = calculate_sectioned::<_, 2>(
+                let (rapl_means, rapl_overall, _) = calculate_sectioned::<_, 3>(
                     Some(&markers),
                     &rapl,
                     &["Total"],
                     &[(0.0, settings.cpu_max_power_watts)],
-                    power_energy_calculator,
-                    None,
+                    power_energy_calculator
                 )
                 .context("Calculate rapl means")
                 .unwrap();
-                let (powersensor3_means, ps3_overall, _times) = calculate_sectioned::<_, 2>(
+                let (powersensor3_means, ps3_overall, _times) = calculate_sectioned::<_, 3>(
                     Some(&markers),
                     &powersensor3,
                     &["Total"],
                     &[(0.0, bench_info.device_power_states[0].0)],
                     power_energy_calculator,
-                    None,
                 )
                 .context("Calculate powersensor3 means")
                 .unwrap();
@@ -137,7 +135,7 @@ impl Plot for YcsbBasic {
         let power_dir = plot_path.join("power");
         let iops_dir = plot_path.join("iops");
         let efficiency_dir = plot_path.join("efficiency");
-        ensure_plot_dirs(&[
+        ensure_dirs(&[
             latency_dir.clone(),
             power_dir.clone(),
             iops_dir.clone(),
@@ -150,7 +148,7 @@ impl Plot for YcsbBasic {
             Vec<PlotEntry>,
             &Settings,
             PathBuf,
-            &str,
+            BarChartKind,
             &str,
             fn(&PlotEntry) -> Option<f64>,
         )> = vec![
@@ -158,7 +156,7 @@ impl Plot for YcsbBasic {
                 ready_entries.clone(),
                 settings,
                 iops_dir.join(format!("{experiment_name}.pdf")),
-                "throughput",
+                BarChartKind::Throughput,
                 "kOPS/s",
                 |data| data.result.throughput_ops_sec.as_ref().map(|x| x / 1000.0),
             ),
@@ -166,7 +164,7 @@ impl Plot for YcsbBasic {
                 ready_entries.clone(),
                 settings,
                 latency_dir.join(format!("{experiment_name}-read.pdf")),
-                "latency",
+                BarChartKind::Latency,
                 "ms",
                 |data| data.result.read.as_ref().map(|x| x.p99_latency_us / 1000.0),
             ),
@@ -174,7 +172,7 @@ impl Plot for YcsbBasic {
                 ready_entries.clone(),
                 settings,
                 latency_dir.join(format!("{experiment_name}-update.pdf")),
-                "latency",
+                BarChartKind::Latency,
                 "ms",
                 |data| {
                     data.result
@@ -187,17 +185,17 @@ impl Plot for YcsbBasic {
                 ready_entries.clone(),
                 settings,
                 power_dir.join(format!("{experiment_name}-cpu.pdf")),
-                "power",
+                BarChartKind::Power,
                 "W",
-                |data| data.cpu_power.benchmark.power,
+                |data| data.cpu_power.benchmark.power_mean,
             ),
             (
                 ready_entries.clone(),
                 settings,
                 power_dir.join(format!("{experiment_name}-ssd.pdf")),
-                "power",
+                BarChartKind::Power,
                 "W",
-                |data| data.ssd_power.benchmark.power,
+                |data| data.ssd_power.benchmark.power_mean,
             ),
         ];
 
@@ -221,7 +219,7 @@ impl YcsbBasic {
         ready_entries: Vec<PlotEntry>,
         settings: &Settings,
         filepath: PathBuf,
-        plotting_file: &str,
+        chart_kind: BarChartKind,
         x_label: &str,
         get_value: fn(&PlotEntry) -> Option<f64>,
         bench_info: &BenchInfo,
@@ -267,11 +265,6 @@ impl YcsbBasic {
             .map(|x| x.iter().map(|x| x.1).collect::<Vec<_>>())
             .collect::<Vec<_>>();
 
-        let chart_kind = match plotting_file {
-            "throughput" => BarChartKind::Throughput,
-            "power" => BarChartKind::Power,
-            other => bail!("Unsupported plotting file {other}"),
-        };
         let config = make_power_state_bar_config(chart_kind, x_label, &experiment_name, None);
         plot_bar_chart(&filepath, results, labels, config, bench_info)
     }
@@ -310,9 +303,9 @@ impl YcsbBasic {
                 (
                     x,
                     y,
-                    throughput / item.ssd_power.overall.power.unwrap(),
-                    throughput / item.ssd_power.benchmark.power.unwrap(),
-                    throughput / item.ssd_power.unmount.power.unwrap(),
+                    throughput / item.ssd_power.overall.power_mean.unwrap(),
+                    throughput / item.ssd_power.benchmark.power_mean.unwrap(),
+                    throughput / item.ssd_power.unmount.power_mean.unwrap(),
                 )
             })
             .collect::<Vec<_>>();
