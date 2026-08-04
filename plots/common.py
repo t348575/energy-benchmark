@@ -32,7 +32,7 @@ def fill_clean(df, offset=0, trim=0, fillmode="ffill", fillmodespread=1000):
     df["time"] = df["time"] / 1000
 
     if fillmode == "ffill":
-        df = df.ffill()
+        df = df.ffill().bfill()
     elif fillmode == "0s":
         df = df.fillna(0)
     elif fillmode == "spread":
