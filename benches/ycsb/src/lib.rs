@@ -16,10 +16,7 @@ use flume::Sender;
 use result::parse_output;
 use serde::{Deserialize, Serialize};
 use tokio::{
-    fs::{File, write, copy},
-    io::AsyncWriteExt,
-    process::Command,
-    time::sleep,
+    fs::{File, copy, create_dir, write}, io::AsyncWriteExt, process::Command, time::sleep,
 };
 use tracing::{debug, warn};
 
@@ -33,6 +30,7 @@ pub struct Ycsb {
     pub vars: Option<HashMap<String, String>>,
     pub db: String,
     pub fs: Filesystem,
+    pub skip_format: Option<bool>,
     pub threads: Option<u32>,
     #[cfg(feature = "prefill")]
     pub prefill: Option<String>,
@@ -161,15 +159,18 @@ impl Bench for Ycsb {
         &self,
         _data_dir: &Path,
         _settings: &Settings,
-        _bench_args: &dyn BenchArgs,
+        bench_args: &dyn BenchArgs,
         _last_experiment: &Option<Box<dyn Bench>>,
         _config: &Config,
         final_results_dir: &Path,
     ) -> Result<()> {
+        let ycsb_args = bench_args
+            .downcast_ref::<YcsbConfig>()
+            .context("Not valid Ycsb config")?;
         if let Some(db_configure_file) = &self._ycsb_db_configure_file {
-            let db_configure_path = Path::new(db_configure_file);
+            let db_configure_path = Path::new(&ycsb_args.root_dir).join(db_configure_file);
             if db_configure_path.exists() {
-                copy(db_configure_path, final_results_dir.join(db_configure_path.file_name().unwrap())).await.context("Failed to copy YCSB db configure file")?;
+                copy(&db_configure_path, final_results_dir.join(db_configure_path.file_name().unwrap())).await.context("Failed to copy YCSB db configure file")?;
             } else {
                 warn!(
                     "YCSB db configure file does not exist: {}",
@@ -197,10 +198,16 @@ impl Bench for Ycsb {
             &ycsb_mount,
             &settings.device,
             &self.fs,
-            !self.is_same_experiment(last_experiment)?,
+            match &self.skip_format {
+                Some(skip_format) => !skip_format,
+                None => !self.is_same_experiment(last_experiment)?,
+            },
             self.fs_mount_opts.clone(),
         )
         .await?;
+
+        let exp_dir = ycsb_mount.join("exp_dir");
+        _ = create_dir(&exp_dir).await;
 
         let marker_filename = final_results_dir.join("markers.csv");
         let mut marker_file = File::create(marker_filename).await?;
@@ -211,7 +218,7 @@ impl Bench for Ycsb {
         #[cfg(feature = "prefill")]
         if let Some(size) = &self.prefill {
             let prefill_file = ycsb_mount.join("prefill");
-            fio::Fio::prefill(&prefill_file, size, config, settings).await?;
+            fio::Fio::prefill(&prefill_file, &settings.device, size, config, settings).await?;
         }
 
         let bench_args = 'inner: {
@@ -239,7 +246,7 @@ impl Bench for Ycsb {
             .arg(format!(
                 "{}={}",
                 self.data_var_name,
-                ycsb_mount.canonicalize().unwrap().to_str().unwrap()
+                exp_dir.canonicalize().unwrap().to_str().unwrap()
             ))
             .current_dir(&ycsb_args.root_dir)
             .stdout(Stdio::piped())
@@ -284,7 +291,7 @@ impl Bench for Ycsb {
             );
         }
 
-        sleep(Duration::from_secs(60)).await;
+        sleep(Duration::from_secs(5)).await;
         debug!(
             "Disk sizes: {}",
             simple_command_with_output_no_dir("df", &["-h", &settings.device]).await?

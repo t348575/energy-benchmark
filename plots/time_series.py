@@ -100,7 +100,7 @@ def build_trace_graphs(trace_file, orig_rows):
             trace_data_read, fillmode="spread", fillmodespread=1000, offset=spec.offset, trim=spec.trim_from_end
         )
         if not trace_data_read.empty:
-            trace_graphs.append([trace_data_read["time"], trace_data_read["count"], "read I/O"])
+            trace_graphs.append({"time": trace_data_read["time"], "count": trace_data_read["count"], "label": "read I/O calls"})
     else:
         vfs_read = trace_data.get("vfs_read", pd.Series(False, index=trace_data.index))
         if vfs_read.any():
@@ -116,7 +116,7 @@ def build_trace_graphs(trace_file, orig_rows):
                 trace_data_read = common.fill_clean(
                     tmp, fillmode="spread", fillmodespread=1000, offset=spec.offset, trim=spec.trim_from_end
                 )
-                trace_graphs.append([trace_data_read["time"], trace_data_read["count"], "read I/O"])
+                trace_graphs.append({"time": trace_data_read["time"], "count": trace_data_read["count"], "label": "read I/O calls"})
 
     trace_data_write = None
     if has_write_func:
@@ -143,7 +143,7 @@ def build_trace_graphs(trace_file, orig_rows):
                 )
 
     if trace_data_write is not None and not trace_data_write.empty:
-        trace_graphs.append([trace_data_write["time"], trace_data_write["count"], "write I/O"])
+        trace_graphs.append({"time": trace_data_write["time"], "count": trace_data_write["count"], "label": "write I/O calls"})
 
     def _agg_flag(flag_col: str) -> pd.DataFrame:
         flag = trace_data.get(flag_col, pd.Series(False, index=trace_data.index))
@@ -164,7 +164,7 @@ def build_trace_graphs(trace_file, orig_rows):
             trace_data_fs_writepage, fillmode="spread", fillmodespread=1000, offset=spec.offset, trim=spec.trim_from_end
         )
         if not trace_data_fs_writepage.empty:
-            trace_graphs.append([trace_data_fs_writepage["time"], trace_data_fs_writepage["count"], "write page file"])
+            trace_graphs.append({"time": trace_data_fs_writepage["time"], "count": trace_data_fs_writepage["count"], "label": "write page file calls"})
 
     trace_data_requeued_io = _agg_flag("requeued_io")
     if not trace_data_requeued_io.empty:
@@ -175,7 +175,7 @@ def build_trace_graphs(trace_file, orig_rows):
                 trace_data_requeued_io, fillmode="spread", fillmodespread=1000, offset=spec.offset, trim=spec.trim_from_end
             )
             if not trace_data_requeued_io.empty:
-                trace_graphs.append([trace_data_requeued_io["time"], trace_data_requeued_io["count"], "requeue I/O"])
+                trace_graphs.append({"time": trace_data_requeued_io["time"], "count": trace_data_requeued_io["count"], "label": "requeue I/O calls"})
 
     trace_data_vfs_fsync = _agg_flag("vfs_fsync")
     if not trace_data_vfs_fsync.empty:
@@ -186,7 +186,7 @@ def build_trace_graphs(trace_file, orig_rows):
                 trace_data_vfs_fsync, fillmode="spread", fillmodespread=1000, offset=spec.offset, trim=spec.trim_from_end
             )
             if not trace_data_vfs_fsync.empty:
-                trace_graphs.append([trace_data_vfs_fsync["time"], trace_data_vfs_fsync["count"], "fsync"])
+                trace_graphs.append({"time": trace_data_vfs_fsync["time"], "count": trace_data_vfs_fsync["count"], "label": "fsync calls"})
 
     return trace_graphs
 
@@ -257,6 +257,8 @@ class Axis:
         )
 
     def fetch_data(self, sensors: Dict[str, pd.DataFrame], bench_data: Optional[Any], skip_offset=False):
+        if self.axis_type == "trace":
+            return bench_data["trace"][int(self.dataset_name)][self.dataset_field]
         if "offset" in bench_data and self.dataset_field == "time":
             offset = bench_data["offset"]
         else:
@@ -268,6 +270,11 @@ class Axis:
         if self.axis_type == "bench":
             return bench_data["data"][self.dataset_field] + offset
         raise ValueError(f"Unsupported axis type '{self.axis_type}'")
+
+    def fetch_label(self, bench_data: Optional[Any]):
+        if self.axis_type == "trace" and self.plot_label == "auto":
+            return bench_data["trace"][int(self.dataset_name)]["label"]
+        return self.plot_label
 
     def copy_as_time(self):
         return Axis(
@@ -368,10 +375,18 @@ class Spec:
             raise Exception("Must specify either --spec or --plot_dir, --results_dir, --name")
 
 def plot(p: "Plot", spec: "Spec", sensors: Dict[str, pd.DataFrame], bench_data, bench_config, bench_info):
+    if any(axis.axis_type == "trace" for axis in p.y_axis + p.secondary_y_axis) and "trace" not in bench_data:
+        return
+
     color_idx = 0
     fig, ax = plt.subplots(figsize=(spec.width, 6.5))
     for y_axis in p.y_axis:
-        ax.plot(p.time.fetch_data(sensors, bench_data), y_axis.fetch_data(sensors, bench_data), color=common.colors[color_idx % len(common.colors)], label=y_axis.plot_label,)
+        ax.plot(
+            p.time.fetch_data(sensors, bench_data),
+            y_axis.fetch_data(sensors, bench_data),
+            color=common.colors[color_idx % len(common.colors)],
+            label=y_axis.fetch_label(bench_data),
+        )
         color_idx += 1
 
     ax.set_ylabel(p.y_axis[0].axis_label)
@@ -388,7 +403,12 @@ def plot(p: "Plot", spec: "Spec", sensors: Dict[str, pd.DataFrame], bench_data, 
     if p.secondary_y_axis:
         ax2 = ax.twinx()
         for y_axis in p.secondary_y_axis:
-            ax2.plot(y_axis.copy_as_time().fetch_data(sensors, bench_data, skip_offset=True), y_axis.fetch_data(sensors, bench_data), color=common.colors[color_idx % len(common.colors)], label=y_axis.plot_label)
+            ax2.plot(
+                y_axis.copy_as_time().fetch_data(sensors, bench_data, skip_offset=True),
+                y_axis.fetch_data(sensors, bench_data),
+                color=common.colors[color_idx % len(common.colors)],
+                label=y_axis.fetch_label(bench_data),
+            )
             color_idx += 1
         ax2.set_ylabel(p.secondary_y_axis[0].axis_label)
         ax2.tick_params(axis="y")
@@ -404,6 +424,42 @@ def plot(p: "Plot", spec: "Spec", sensors: Dict[str, pd.DataFrame], bench_data, 
     plt.ylim(ymin, ymax * 1.02) 
     plt.savefig(os.path.join(spec.plot_dir, p.dir, f"{p.file_name}.pdf"), format="pdf")
     plt.close()
+
+def build_trace_plot(spec: "Spec", bench_data) -> Optional["Plot"]:
+    if "trace" not in bench_data or not bench_data["trace"]:
+        return None
+
+    return Plot(
+        y_axis=[
+            Axis(
+                axis_type="sensor",
+                dataset_name="diskstat.csv",
+                dataset_field="total",
+                plot_label="Disk Throughput",
+                axis_label="Total throughput (MiB/s)",
+            )
+        ],
+        time=Axis(
+            axis_type="sensor",
+            dataset_name="diskstat.csv",
+            dataset_field="time",
+            plot_label="time",
+            axis_label="Time (s)",
+        ),
+        secondary_y_axis=[
+            Axis(
+                axis_type="trace",
+                dataset_name=str(i),
+                dataset_field="count",
+                plot_label="auto",
+                axis_label="Num. function calls",
+            )
+            for i in range(len(bench_data["trace"]))
+        ],
+        title="Throughput & function traces vs. Time",
+        file_name=f"{spec.name}-trace",
+        dir=spec.name,
+    )
 
 def calculate_energy(df, time="time", power="Total"):
     dt = df[time].diff().iloc[1:]
@@ -519,6 +575,10 @@ if __name__ == "__main__":
     trace_file = os.path.join(spec.plot_dir, "plot_data", f"{spec.name}.csv")
     if os.path.exists(trace_file):
         bench_data["trace"] = build_trace_graphs(trace_file, len(sensors["powersensor3.csv"]))
+
+    trace_plot = build_trace_plot(spec, bench_data)
+    if trace_plot is not None:
+        plot(trace_plot, spec, sensors, bench_data, bench_config, bench_info)
 
     for p in spec.plots:
         plot(p, spec, sensors, bench_data, bench_config, bench_info)

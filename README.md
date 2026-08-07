@@ -250,3 +250,22 @@ async fn read_dummysensor(sensor: Arc<Mutex<InternalDiskStat>>, last_time: Insta
     Ok(readings)
 }
 ```
+
+## Adding new benchmarks
+
+Adding new benchmarks involves implementing the `Bench` trait in [common/src/bench.rs](common/src/bench.rs):
+Documentation provided in `bench.rs` sufficienctly details the methods. The provided implementations in this repostiory can be used as examples, such as [fio](benches/fio) and [filebench](benches/filebench/).
+
+The main benchmark flow is as follows:
+1. `cmds()` is called for each yaml benchmark, and should return every benchmark variant to be executed, along with its CLI arguments
+2. For each power state configured:
+   1. NVMe device power state for the run is set
+   2. For each benchmark variant returned by `cmds()`
+      1. The data subsdirectory where results are stored for the run is created
+      2. `experiment_init()`
+      3. `add_path_args()` allow mutating the CLI arguments for this run
+      4. `add_env()` to set additional enviroment variables
+      5. `run()` the actual benchmark run
+      6. Wait for sensors to finish writing files.
+      7. `post_experiment()` is called to perform any required cleanup
+      8. Benchmark sleeps if required based on write hint, useful to allow any SSD GC to settle

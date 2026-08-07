@@ -120,7 +120,7 @@ pub trait Bench: Debug + DynClone + Downcast + Send + Sync {
     /// Arguments:
     /// * `program` - Program to run
     /// * `args` - Arguments to run program with
-    /// /// * `settings` - Settings from config file
+    /// * `settings` - Settings from config file
     /// * `sensors` - Sensors that are available to record data
     /// * `final_results_dir` - Directory to store results in
     /// * `bench_obj` - Copy of the benchmark object (ie. self)

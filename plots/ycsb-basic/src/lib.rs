@@ -280,6 +280,7 @@ impl YcsbBasic {
         let mut iops_j_overall = vec![vec![0f64; num_power_states]; order.len()];
         let mut iops_j_benchmark = iops_j_overall.clone();
         let mut iops_j_unmount = iops_j_overall.clone();
+        let mut iops_j_total = iops_j_overall.clone();
         let experiment_name = ready_entries[0].info.name.clone();
 
         let results = ready_entries
@@ -306,6 +307,7 @@ impl YcsbBasic {
                     throughput / item.ssd_power.overall.power_mean.unwrap(),
                     throughput / item.ssd_power.benchmark.power_mean.unwrap(),
                     throughput / item.ssd_power.unmount.power_mean.unwrap(),
+                    throughput / item.ssd_power.benchmark.power_mean.unwrap() + item.cpu_power.benchmark.power_mean.unwrap(),
                 )
             })
             .collect::<Vec<_>>();
@@ -315,6 +317,7 @@ impl YcsbBasic {
             iops_j_overall[x][y] = item.2;
             iops_j_benchmark[x][y] = item.3;
             iops_j_unmount[x][y] = item.4;
+            iops_j_total[x][y] = item.5;
         }
 
         let jobs = vec![
@@ -337,6 +340,13 @@ impl YcsbBasic {
                 data: iops_j_unmount,
                 title: "kIOPS/J",
                 x_label: "unmount",
+                reverse: false,
+            },
+            HeatmapJob {
+                filepath: plot_path.join(format!("{}-iops-j-total.pdf", &experiment_name)),
+                data: iops_j_total,
+                title: "kIOPS/J",
+                x_label: "total",
                 reverse: false,
             },
         ];
