@@ -1,0 +1,533 @@
+name: qd-rate-limited
+settings:
+  device: /dev/nvme1n1
+  numa:
+    cpunodebind: 1
+    membind: 1
+  nvme_power_states: [0]
+  max_repeat: 5
+  cpu_max_power_watts: 500
+  sleep_after_writes: 60
+
+bench_args:
+  - type: FioConfig
+    program: ../fio/fio
+
+sensors:
+  - sensor: Powersensor3
+    args:
+      type: Powersensor3Config
+      device: /dev/ttyACM0
+  - sensor: Rapl
+  - sensor: Sysinfo
+    args:
+      type: SysinfoConfig
+      interval: 10
+  - sensor: NetioHttp
+    args:
+      type: NetioHttpConfig
+      pdus:
+        - alias: left
+          url: http://192.168.1.78/netio.json
+          loads: [Node3L]
+        - alias: right
+          url: http://192.168.1.79/netio.json
+          loads: [Node3R]
+  - sensor: Diskstat
+
+benches:
+  - name: iodepth-1
+    repeat: 1
+    bench:
+      type: Fio
+      test_type:
+        type: randread
+      request_sizes: [4k]
+      io_engines: [io_uring]
+      io_depths: [1]
+      direct: true
+      time_based: true
+      runtime: 30s
+      ramp_time: 15s
+      extra_options: [[--rate=52M]]
+    plots:
+      - type: FioBasic
+        variables: [io_depths]
+        x_label: IO Depth
+  - name: iodepth-2
+    repeat: 1
+    bench:
+      type: Fio
+      test_type:
+        type: randread
+      request_sizes: [4k]
+      io_engines: [io_uring]
+      io_depths: [2]
+      direct: true
+      time_based: true
+      runtime: 30s
+      ramp_time: 15s
+      extra_options: [[--rate=92M]]
+    plots:
+      - type: FioBasic
+        variables: [io_depths]
+        x_label: IO Depth
+  - name: iodepth-4
+    repeat: 1
+    bench:
+      type: Fio
+      test_type:
+        type: randread
+      request_sizes: [4k]
+      io_engines: [io_uring]
+      io_depths: [4]
+      direct: true
+      time_based: true
+      runtime: 30s
+      ramp_time: 15s
+      extra_options: [[--rate=148M]]
+    plots:
+      - type: FioBasic
+        variables: [io_depths]
+        x_label: IO Depth
+  - name: iodepth-8
+    repeat: 1
+    bench:
+      type: Fio
+      test_type:
+        type: randread
+      request_sizes: [4k]
+      io_engines: [io_uring]
+      io_depths: [8]
+      direct: true
+      time_based: true
+      runtime: 30s
+      ramp_time: 15s
+      extra_options: [[--rate=176M]]
+    plots:
+      - type: FioBasic
+        variables: [io_depths]
+        x_label: IO Depth
+  - name: iodepth-16
+    repeat: 1
+    bench:
+      type: Fio
+      test_type:
+        type: randread
+      request_sizes: [4k]
+      io_engines: [io_uring]
+      io_depths: [16]
+      direct: true
+      time_based: true
+      runtime: 30s
+      ramp_time: 15s
+      extra_options: [[--rate=288M]]
+    plots:
+      - type: FioBasic
+        variables: [io_depths]
+        x_label: IO Depth
+  - name: iodepth-32
+    repeat: 1
+    bench:
+      type: Fio
+      test_type:
+        type: randread
+      request_sizes: [4k]
+      io_engines: [io_uring]
+      io_depths: [32]
+      direct: true
+      time_based: true
+      runtime: 30s
+      ramp_time: 15s
+      extra_options: [[--rate=480M]]
+    plots:
+      - type: FioBasic
+        variables: [io_depths]
+        x_label: IO Depth
+  - name: iodepth-64
+    repeat: 1
+    bench:
+      type: Fio
+      test_type:
+        type: randread
+      request_sizes: [4k]
+      io_engines: [io_uring]
+      io_depths: [64]
+      direct: true
+      time_based: true
+      runtime: 30s
+      ramp_time: 15s
+      extra_options: [[--rate=576M]]
+    plots:
+      - type: FioBasic
+        variables: [io_depths]
+        x_label: IO Depth
+  - name: iodepth-128
+    repeat: 1
+    bench:
+      type: Fio
+      test_type:
+        type: randread
+      request_sizes: [4k]
+      io_engines: [io_uring]
+      io_depths: [128]
+      direct: true
+      time_based: true
+      runtime: 30s
+      ramp_time: 15s
+      extra_options: [[--rate=640M]]
+    plots:
+      - type: FioBasic
+        variables: [io_depths]
+        x_label: IO Depth
+  - name: iodepth-256
+    repeat: 1
+    bench:
+      type: Fio
+      test_type:
+        type: randread
+      request_sizes: [4k]
+      io_engines: [io_uring]
+      io_depths: [256]
+      direct: true
+      time_based: true
+      runtime: 30s
+      ramp_time: 15s
+      extra_options: [[--rate=512M]]
+    plots:
+      - type: FioBasic
+        variables: [io_depths]
+        x_label: IO Depth
+  - name: threads-1
+    repeat: 1
+    bench:
+      type: Fio
+      test_type:
+        type: randread
+      request_sizes: [4k]
+      io_engines: [io_uring]
+      io_depths: [1]
+      num_jobs: [1]
+      direct: true
+      time_based: true
+      runtime: 30s
+      ramp_time: 15s
+      extra_options: [[--thread, --rate=52M]]
+    plots:
+      - type: FioBasic
+        variables: [num_jobs]
+        x_label: Threads
+  - name: threads-2
+    repeat: 1
+    bench:
+      type: Fio
+      test_type:
+        type: randread
+      request_sizes: [4k]
+      io_engines: [io_uring]
+      io_depths: [1]
+      num_jobs: [2]
+      direct: true
+      time_based: true
+      runtime: 30s
+      ramp_time: 15s
+      extra_options: [[--thread, --rate=46M]]
+    plots:
+      - type: FioBasic
+        variables: [num_jobs]
+        x_label: Threads
+  - name: threads-4
+    repeat: 1
+    bench:
+      type: Fio
+      test_type:
+        type: randread
+      request_sizes: [4k]
+      io_engines: [io_uring]
+      io_depths: [1]
+      num_jobs: [4]
+      direct: true
+      time_based: true
+      runtime: 30s
+      ramp_time: 15s
+      extra_options: [[--thread, --rate=37M]]
+    plots:
+      - type: FioBasic
+        variables: [num_jobs]
+        x_label: Threads
+  - name: threads-8
+    repeat: 1
+    bench:
+      type: Fio
+      test_type:
+        type: randread
+      request_sizes: [4k]
+      io_engines: [io_uring]
+      io_depths: [1]
+      num_jobs: [8]
+      direct: true
+      time_based: true
+      runtime: 30s
+      ramp_time: 15s
+      extra_options: [[--thread, --rate=22M]]
+    plots:
+      - type: FioBasic
+        variables: [num_jobs]
+        x_label: Threads
+  - name: threads-16
+    repeat: 1
+    bench:
+      type: Fio
+      test_type:
+        type: randread
+      request_sizes: [4k]
+      io_engines: [io_uring]
+      io_depths: [1]
+      num_jobs: [16]
+      direct: true
+      time_based: true
+      runtime: 30s
+      ramp_time: 15s
+      extra_options: [[--thread, --rate=18M]]
+    plots:
+      - type: FioBasic
+        variables: [num_jobs]
+        x_label: Threads
+  - name: threads-32
+    repeat: 1
+    bench:
+      type: Fio
+      test_type:
+        type: randread
+      request_sizes: [4k]
+      io_engines: [io_uring]
+      io_depths: [1]
+      num_jobs: [32]
+      direct: true
+      time_based: true
+      runtime: 30s
+      ramp_time: 15s
+      extra_options: [[--thread, --rate=15M]]
+    plots:
+      - type: FioBasic
+        variables: [num_jobs]
+        x_label: Threads
+  - name: threads-64
+    repeat: 1
+    bench:
+      type: Fio
+      test_type:
+        type: randread
+      request_sizes: [4k]
+      io_engines: [io_uring]
+      io_depths: [1]
+      num_jobs: [64]
+      direct: true
+      time_based: true
+      runtime: 30s
+      ramp_time: 15s
+      extra_options: [[--thread, --rate=9M]]
+    plots:
+      - type: FioBasic
+        variables: [num_jobs]
+        x_label: Threads
+  - name: threads-128
+    repeat: 1
+    bench:
+      type: Fio
+      test_type:
+        type: randread
+      request_sizes: [4k]
+      io_engines: [io_uring]
+      io_depths: [1]
+      num_jobs: [128]
+      direct: true
+      time_based: true
+      runtime: 30s
+      ramp_time: 15s
+      extra_options: [[--thread, --rate=5M]]
+    plots:
+      - type: FioBasic
+        variables: [num_jobs]
+        x_label: Threads
+  - name: threads-256
+    repeat: 1
+    bench:
+      type: Fio
+      test_type:
+        type: randread
+      request_sizes: [4k]
+      io_engines: [io_uring]
+      io_depths: [1]
+      num_jobs: [256]
+      direct: true
+      time_based: true
+      runtime: 30s
+      ramp_time: 15s
+      extra_options: [[--thread, --rate=2M]]
+    plots:
+      - type: FioBasic
+        variables: [num_jobs]
+        x_label: Threads
+  - name: rq-1
+    repeat: 1
+    bench:
+      type: Fio
+      test_type:
+        type: randread
+      request_sizes: [4k]
+      io_engines: [io_uring]
+      io_depths: [1]
+      direct: true
+      time_based: true
+      runtime: 30s
+      ramp_time: 15s
+      extra_options: [[--rate=52M]]
+    plots:
+      - type: FioBasic
+        variables: [io_depths]
+        x_label: IO Depth
+  - name: rq-2
+    repeat: 1
+    bench:
+      type: Fio
+      test_type:
+        type: randread
+      request_sizes: [8k]
+      io_engines: [io_uring]
+      io_depths: [1]
+      direct: true
+      time_based: true
+      runtime: 30s
+      ramp_time: 15s
+      extra_options: [[--rate=92M]]
+    plots:
+      - type: FioBasic
+        variables: [io_depths]
+        x_label: IO Depth
+  - name: rq-4
+    repeat: 1
+    bench:
+      type: Fio
+      test_type:
+        type: randread
+      request_sizes: [16k]
+      io_engines: [io_uring]
+      io_depths: [1]
+      direct: true
+      time_based: true
+      runtime: 30s
+      ramp_time: 15s
+      extra_options: [[--rate=184M]]
+    plots:
+      - type: FioBasic
+        variables: [io_depths]
+        x_label: IO Depth
+  - name: rq-8
+    repeat: 1
+    bench:
+      type: Fio
+      test_type:
+        type: randread
+      request_sizes: [32k]
+      io_engines: [io_uring]
+      io_depths: [1]
+      direct: true
+      time_based: true
+      runtime: 30s
+      ramp_time: 15s
+      extra_options: [[--rate=176M]]
+    plots:
+      - type: FioBasic
+        variables: [io_depths]
+        x_label: IO Depth
+  - name: rq-16
+    repeat: 1
+    bench:
+      type: Fio
+      test_type:
+        type: randread
+      request_sizes: [64k]
+      io_engines: [io_uring]
+      io_depths: [1]
+      direct: true
+      time_based: true
+      runtime: 30s
+      ramp_time: 15s
+      extra_options: [[--rate=288M]]
+    plots:
+      - type: FioBasic
+        variables: [io_depths]
+        x_label: IO Depth
+  - name: rq-32
+    repeat: 1
+    bench:
+      type: Fio
+      test_type:
+        type: randread
+      request_sizes: [128k]
+      io_engines: [io_uring]
+      io_depths: [1]
+      direct: true
+      time_based: true
+      runtime: 30s
+      ramp_time: 15s
+      extra_options: [[--rate=480M]]
+    plots:
+      - type: FioBasic
+        variables: [io_depths]
+        x_label: IO Depth
+  - name: rq-64
+    repeat: 1
+    bench:
+      type: Fio
+      test_type:
+        type: randread
+      request_sizes: [256k]
+      io_engines: [io_uring]
+      io_depths: [1]
+      direct: true
+      time_based: true
+      runtime: 30s
+      ramp_time: 15s
+      extra_options: [[--rate=576M]]
+    plots:
+      - type: FioBasic
+        variables: [io_depths]
+        x_label: IO Depth
+  - name: rq-128
+    repeat: 1
+    bench:
+      type: Fio
+      test_type:
+        type: randread
+      request_sizes: [512k]
+      io_engines: [io_uring]
+      io_depths: [1]
+      direct: true
+      time_based: true
+      runtime: 30s
+      ramp_time: 15s
+      extra_options: [[--rate=640M]]
+    plots:
+      - type: FioBasic
+        variables: [io_depths]
+        x_label: IO Depth
+  - name: rq-256
+    repeat: 1
+    bench:
+      type: Fio
+      test_type:
+        type: randread
+      request_sizes: [1m]
+      io_engines: [io_uring]
+      io_depths: [1]
+      direct: true
+      time_based: true
+      runtime: 30s
+      ramp_time: 15s
+      extra_options: [[--rate=512M]]
+    plots:
+      - type: FioBasic
+        variables: [io_depths]
+        x_label: IO Depth

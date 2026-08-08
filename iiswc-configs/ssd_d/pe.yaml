@@ -1,0 +1,86 @@
+name: pt-curve
+settings:
+  device: /dev/nvme1n1
+  numa:
+    cpunodebind: 1
+    membind: 1
+  nvme_power_states: [0]
+  max_repeat: 5
+  cpu_max_power_watts: 500
+
+bench_args:
+  - type: FioConfig
+    program: ../fio/fio
+
+sensors:
+  - sensor: Powersensor3
+    args:
+      type: Powersensor3Config
+      device: /dev/ttyACM0
+  - sensor: Rapl
+  - sensor: Sysinfo
+    args:
+      type: SysinfoConfig
+      interval: 10
+  - sensor: NetioHttp
+    args:
+      type: NetioHttpConfig
+      pdus:
+        - alias: left
+          url: http://192.168.1.78/netio.json
+          loads: [Node3L]
+        - alias: right
+          url: http://192.168.1.79/netio.json
+          loads: [Node3R]
+  - sensor: Diskstat
+
+benches:
+  - name: read
+    repeat: 1
+    bench:
+      type: Fio
+      test_type:
+        type: randread
+      request_sizes: [64k]
+      io_engines: [io_uring]
+      io_depths: [256]
+      num_jobs: [10]
+      direct: true
+      time_based: true
+      runtime: 30s
+      ramp_time: 15s
+      extra_options: [
+        [--rate=10M],
+        [--rate=20M],
+        [--rate=30M],
+        [--rate=40M],
+        [--rate=50M],
+        [--rate=60M],
+        [--rate=70M],
+        [--rate=80M],
+        [--rate=90M],
+        [--rate=100M],
+        [--rate=110M],
+        [--rate=120M],
+        [--rate=130M],
+        [--rate=140M],
+        [--rate=150M],
+        [--rate=160M],
+        [--rate=170M],
+        [--rate=180M],
+        [--rate=190M],
+        [--rate=200M],
+        [--rate=210M],
+        [--rate=220M],
+        [--rate=230M],
+        [--rate=240M],
+        [--rate=250M],
+        [--rate=260M],
+        [--rate=270M],
+        [--rate=280M],
+      ]
+    plots:
+      - type: FioBasic
+        variables: [extra_options]
+        x_label: "Read rate (MiB/s)"
+        labels: ["0.1G", "0.2G", "0.3G", "0.4G", "0.5G", "0.6G", "0.7G", "0.8G", "0.9G", "1G", "1.1G", "1.2G", "1.3G", "1.4G", "1.5G", "1.6G", "1.7G", "1.8G", "1.9G", "2G", "2.1G", "2.2G", "2.3G", "2.4G", "2.5G", "2.6G", "2.7G", "2.8G"]

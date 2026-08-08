@@ -1,0 +1,227 @@
+name: io-engine-iodepth
+settings:
+  device: /dev/nvme1n1
+  numa:
+    cpunodebind: 1
+    membind: 1
+  nvme_power_states: [0]
+  max_repeat: 5
+  cpu_max_power_watts: 500
+  sleep_after_writes: 60
+
+bench_args:
+  - type: FioConfig
+    program: ../fio/fio
+
+sensors:
+  - sensor: Powersensor3
+    args:
+      type: Powersensor3Config
+      device: /dev/ttyACM0
+  - sensor: Rapl
+  - sensor: Sysinfo
+    args:
+      type: SysinfoConfig
+      interval: 10
+  - sensor: NetioHttp
+    args:
+      type: NetioHttpConfig
+      pdus:
+        - alias: left
+          url: http://192.168.1.78/netio.json
+          loads: [Node3L]
+        - alias: right
+          url: http://192.168.1.79/netio.json
+          loads: [Node3R]
+  - sensor: Diskstat
+
+benches:
+  - name: read-1
+    repeat: 1
+    bench:
+      type: Fio
+      test_type:
+        type: randread
+      request_sizes: [4k, 1m]
+      io_engines: [sync, posixaio, libaio, io_uring]
+      io_depths: [1]
+      direct: true
+      time_based: true
+      runtime: 15s
+      ramp_time: 5s
+      fs: Ext4
+      skip_format: true
+      filename: mountpoint/testfile
+      extra_options: [[--cpus_allowed=10]]
+    plots:
+      - type: FioBasic
+        variables: [io_engine]
+        x_label: IO Engine
+  - name: read-2
+    repeat: 1
+    bench:
+      type: Fio
+      test_type:
+        type: randread
+      request_sizes: [4k, 1m]
+      io_engines: [sync, posixaio, libaio, io_uring]
+      io_depths: [2]
+      direct: true
+      time_based: true
+      runtime: 15s
+      ramp_time: 5s
+      fs: Ext4
+      skip_format: true
+      filename: mountpoint/testfile
+      extra_options: [[--cpus_allowed=10]]
+    plots:
+      - type: FioBasic
+        variables: [io_engine]
+        x_label: IO Engine
+  - name: read-4
+    repeat: 1
+    bench:
+      type: Fio
+      test_type:
+        type: randread
+      request_sizes: [4k, 1m]
+      io_engines: [sync, posixaio, libaio, io_uring]
+      io_depths: [4]
+      direct: true
+      time_based: true
+      runtime: 15s
+      ramp_time: 5s
+      fs: Ext4
+      skip_format: true
+      filename: mountpoint/testfile
+      extra_options: [[--cpus_allowed=10]]
+    plots:
+      - type: FioBasic
+        variables: [io_engine]
+        x_label: IO Engine
+  - name: read-8
+    repeat: 1
+    bench:
+      type: Fio
+      test_type:
+        type: randread
+      request_sizes: [4k, 1m]
+      io_engines: [sync, posixaio, libaio, io_uring]
+      io_depths: [8]
+      direct: true
+      time_based: true
+      runtime: 15s
+      ramp_time: 5s
+      fs: Ext4
+      skip_format: true
+      filename: mountpoint/testfile
+      extra_options: [[--cpus_allowed=10]]
+    plots:
+      - type: FioBasic
+        variables: [io_engine]
+        x_label: IO Engine
+  - name: read-16
+    repeat: 1
+    bench:
+      type: Fio
+      test_type:
+        type: randread
+      request_sizes: [4k, 1m]
+      io_engines: [sync, posixaio, libaio, io_uring]
+      io_depths: [16]
+      direct: true
+      time_based: true
+      runtime: 15s
+      ramp_time: 5s
+      fs: Ext4
+      skip_format: true
+      filename: mountpoint/testfile
+      extra_options: [[--cpus_allowed=10]]
+    plots:
+      - type: FioBasic
+        variables: [io_engine]
+        x_label: IO Engine
+  - name: read-32
+    repeat: 1
+    bench:
+      type: Fio
+      test_type:
+        type: randread
+      request_sizes: [4k, 1m]
+      io_engines: [sync, posixaio, libaio, io_uring]
+      io_depths: [32]
+      direct: true
+      time_based: true
+      runtime: 15s
+      ramp_time: 5s
+      fs: Ext4
+      skip_format: true
+      filename: mountpoint/testfile
+      extra_options: [[--cpus_allowed=10]]
+    plots:
+      - type: FioBasic
+        variables: [io_engine]
+        x_label: IO Engine
+  - name: read-64
+    repeat: 1
+    bench:
+      type: Fio
+      test_type:
+        type: randread
+      request_sizes: [4k, 1m]
+      io_engines: [sync, posixaio, libaio, io_uring]
+      io_depths: [64]
+      direct: true
+      time_based: true
+      runtime: 15s
+      ramp_time: 5s
+      fs: Ext4
+      skip_format: true
+      filename: mountpoint/testfile
+      extra_options: [[--cpus_allowed=10]]
+    plots:
+      - type: FioBasic
+        variables: [io_engine]
+        x_label: IO Engine
+  - name: read-128
+    repeat: 1
+    bench:
+      type: Fio
+      test_type:
+        type: randread
+      request_sizes: [4k, 1m]
+      io_engines: [sync, posixaio, libaio, io_uring]
+      io_depths: [128]
+      direct: true
+      time_based: true
+      runtime: 15s
+      ramp_time: 5s
+      fs: Ext4
+      skip_format: true
+      filename: mountpoint/testfile
+      extra_options: [[--cpus_allowed=10]]
+    plots:
+      - type: FioBasic
+        variables: [io_engine]
+        x_label: IO Engine
+  - name: read-256
+    repeat: 1
+    bench:
+      type: Fio
+      test_type:
+        type: randread
+      request_sizes: [4k, 1m]
+      io_engines: [sync, posixaio, libaio, io_uring]
+      io_depths: [256]
+      direct: true
+      time_based: true
+      runtime: 15s
+      ramp_time: 5s
+      fs: Ext4
+      skip_format: true
+      filename: mountpoint/testfile
+      extra_options: [[--cpus_allowed=10]]
+    plots:
+      - type: FioBasic
+        variables: [io_engine]
+        x_label: IO Engine

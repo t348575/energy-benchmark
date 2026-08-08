@@ -11,6 +11,8 @@ The artifact provides two workflows:
 
 The replay does **not** execute storage benchmarks or access block devices. It mounts the dataset as read-only and writes generated data only to the selected output directory.
 
+**A copy of the dataset readme, also present in the dataset record is at [DATASET_README.md](./DATASET-README.md)
+
 ## Artifact contents
 
 ```text

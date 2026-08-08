@@ -1,0 +1,3 @@
+access-patterns-randwrite
+access-patterns-readwrite
+access-patterns-seqwrite

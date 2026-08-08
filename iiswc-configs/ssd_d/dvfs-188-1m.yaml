@@ -1,0 +1,77 @@
+name: dvfs-1.88ghz-1m
+settings:
+  device: /dev/nvme1n1
+  numa:
+    cpunodebind: 1
+    membind: 1
+  nvme_power_states: [0]
+  cpu_freq:
+    freq: 1880000
+    default_governor: schedutil
+  max_repeat: 5
+  cpu_max_power_watts: 500
+  sleep_after_writes: 60
+
+bench_args:
+  - type: FioConfig
+    program: ../fio/fio
+
+sensors:
+  - sensor: Powersensor3
+    args:
+      type: Powersensor3Config
+      device: /dev/ttyACM0
+  - sensor: Rapl
+  - sensor: Sysinfo
+    args:
+      type: SysinfoConfig
+      interval: 10
+  - sensor: NetioHttp
+    args:
+      type: NetioHttpConfig
+      pdus:
+        - alias: left
+          url: http://192.168.1.78/netio.json
+          loads: [Node3L]
+        - alias: right
+          url: http://192.168.1.79/netio.json
+          loads: [Node3R]
+  - sensor: Diskstat
+
+benches:
+  - name: iodepth
+    repeat: 1
+    bench:
+      type: Fio
+      test_type:
+        type: randread
+      request_sizes: [1m]
+      io_engines: [io_uring]
+      io_depths: [1, 2, 4, 8, 16, 32, 64, 128, 256]
+      direct: true
+      time_based: true
+      runtime: 30s
+      ramp_time: 15s
+      extra_options: [[--cpus_allowed=10]]
+    plots:
+      - type: FioBasic
+        variables: [io_depths]
+        x_label: IO Depth
+  - name: threads
+    repeat: 1
+    bench:
+      type: Fio
+      test_type:
+        type: randread
+      request_sizes: [1m]
+      io_engines: [io_uring]
+      io_depths: [1]
+      num_jobs: [1, 2, 4, 8, 16, 32, 64, 128, 256]
+      direct: true
+      time_based: true
+      runtime: 30s
+      ramp_time: 15s
+    plots:
+      - type: FioBasic
+        variables: [num_jobs]
+        x_label: Thread

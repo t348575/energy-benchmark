@@ -1,0 +1,6 @@
+request-size-write
+access-patterns-write
+nvme-pst-eff-write
+thinktime-write
+gc
+ssd-max-write

@@ -1,0 +1,63 @@
+name: thinktime
+settings:
+  device: /dev/nvme1n1
+  numa:
+    cpunodebind: 1
+    membind: 1
+  nvme_power_states: [0, 1, 2]
+  max_repeat: 5
+  cpu_max_power_watts: 500
+  sleep_after_writes: 60
+  sleep_between_experiments: 15
+
+bench_args:
+  - type: FioConfig
+    program: ../fio/fio
+
+sensors:
+  - sensor: Powersensor3
+    args:
+      type: Powersensor3Config
+      device: /dev/ttyACM0
+  - sensor: Rapl
+  - sensor: Sysinfo
+    args:
+      type: SysinfoConfig
+      interval: 10
+  - sensor: NetioHttp
+    args:
+      type: NetioHttpConfig
+      pdus:
+        - alias: left
+          url: http://192.168.1.78/netio.json
+          loads: [Node3L]
+        - alias: right
+          url: http://192.168.1.79/netio.json
+          loads: [Node3R]
+  - sensor: Diskstat
+
+benches:
+  - name: write
+    repeat: 1
+    bench:
+      type: Fio
+      test_type:
+        type: randwrite
+      request_sizes: [4k, 1m]
+      io_engines: [io_uring]
+      io_depths: [1]
+      direct: true
+      time_based: true
+      runtime: 30s
+      ramp_time: 15s
+      extra_options: [
+        [--thinktime=50ms, --thinktime_spin=50ms],
+        [--thinktime=150ms, --thinktime_spin=150ms],
+      ]
+    plots:
+      - type: FioBwOverTime
+        variable: request_sizes
+        x_label: Request size
+      - type: FioBasic
+        variables: [request_sizes]
+        x_label: Request size

@@ -1,0 +1,84 @@
+name: request-size-fs
+settings:
+  device: /dev/nvme1n1
+  numa:
+    cpunodebind: 1
+    membind: 1
+  nvme_power_states: [0]
+  max_repeat: 5
+  cpu_max_power_watts: 500
+  sleep_after_writes: 60
+
+bench_args:
+  - type: FioConfig
+    program: ../fio/fio
+
+sensors:
+  - sensor: Powersensor3
+    args:
+      type: Powersensor3Config
+      device: /dev/ttyACM0
+  - sensor: Rapl
+  - sensor: Sysinfo
+    args:
+      type: SysinfoConfig
+      interval: 10
+  - sensor: NetioHttp
+    args:
+      type: NetioHttpConfig
+      pdus:
+        - alias: left
+          url: http://192.168.1.78/netio.json
+          loads: [Node3L]
+        - alias: right
+          url: http://192.168.1.79/netio.json
+          loads: [Node3R]
+  - sensor: Diskstat
+
+benches:
+  - name: read
+    repeat: 1
+    bench:
+      type: Fio
+      test_type:
+        type: randread
+      request_sizes: [4k, 8k, 16k, 32k, 64k, 128k, 256k, 512k, 1m]
+      io_engines: [io_uring]
+      io_depths: [1]
+      direct: true
+      time_based: true
+      runtime: 30s
+      ramp_time: 15s
+      fs: Ext4
+      skip_format: true
+      open_dir: mountpoint/fileset
+      extra_options: [[--alloc-size=524288]]
+    plots:
+      - type: FioBwOverTime
+        variable: request_sizes
+      - type: FioBasic
+        variables: [request_sizes]
+        x_label: Request size
+  - name: seqread
+    repeat: 1
+    bench:
+      type: Fio
+      test_type:
+        type: read
+      request_sizes: [4k, 8k, 16k, 32k, 64k, 128k, 256k, 512k, 1m]
+      io_engines: [io_uring]
+      io_depths: [1]
+      direct: true
+      time_based: true
+      runtime: 30s
+      ramp_time: 15s
+      fs: Ext4
+      skip_format: true
+      open_dir: mountpoint/fileset
+      extra_options: [[--alloc-size=524288]]
+    plots:
+      - type: FioBwOverTime
+        variable: request_sizes
+      - type: FioBasic
+        variables: [request_sizes]
+        x_label: Request size

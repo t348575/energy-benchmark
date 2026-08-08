@@ -17,6 +17,48 @@ require_commands() {
 	done
 }
 
+restore_flat_zenodo_bag() (
+	local bag_dir="$1" source target name
+	local restored=0
+	local -a package_archives raw_manifests
+
+	shopt -s nullglob
+	package_archives=("$bag_dir"/base_*.tar.zst)
+	raw_manifests=("$bag_dir"/base_*.raw-sha256.txt)
+	if ((${#package_archives[@]} == 0 && ${#raw_manifests[@]} == 0)) &&
+		[[ ! -f "$bag_dir/package_members.tsv" && ! -f "$bag_dir/base_directories.txt" ]]; then
+		return
+	fi
+
+	printf 'Restoring BagIt directory layout from flat Zenodo filenames...\n'
+	mkdir -p -- \
+		"$bag_dir/data/packages" \
+		"$bag_dir/metadata/per_package_file_manifests"
+
+	for source in "${package_archives[@]}"; do
+		target="$bag_dir/data/packages/${source##*/}"
+		[[ ! -e "$target" ]] || fail "Cannot restore Zenodo file; target exists: $target" || return
+		mv -- "$source" "$target"
+		restored=1
+	done
+	for source in "${raw_manifests[@]}"; do
+		target="$bag_dir/metadata/per_package_file_manifests/${source##*/}"
+		[[ ! -e "$target" ]] || fail "Cannot restore Zenodo file; target exists: $target" || return
+		mv -- "$source" "$target"
+		restored=1
+	done
+	for name in package_members.tsv base_directories.txt; do
+		source="$bag_dir/$name"
+		[[ -f "$source" ]] || continue
+		target="$bag_dir/metadata/$name"
+		[[ ! -e "$target" ]] || fail "Cannot restore Zenodo file; target exists: $target" || return
+		mv -- "$source" "$target"
+		restored=1
+	done
+
+	((restored == 1)) || fail "No flat Zenodo files were restored"
+)
+
 validate_ready_bag() {
 	local bag_dir="$1"
 	[[ -f "$bag_dir/READY" ]] || fail "Bag is not marked READY: $bag_dir" || return
@@ -227,7 +269,7 @@ OUTPUT_DIR="$2"
 shift 2
 SELECTORS=("$@")
 
-require_commands sha256sum awk sort tar zstd find cmp
+require_commands sha256sum awk sort tar zstd find cmp mv mkdir
 [[ -d "$BAG_DIR" ]] || fail "Bag directory does not exist: $BAG_DIR" || exit
 BAG_DIR="$(cd -- "$BAG_DIR" && pwd -P)"
 OUTPUT_PARENT="$(dirname -- "$OUTPUT_DIR")"
@@ -238,6 +280,7 @@ case "$OUTPUT_DIR/" in
 "$BAG_DIR/"*) fail "OUTPUT_DIR must be outside the bag."; exit ;;
 esac
 
+restore_flat_zenodo_bag "$BAG_DIR"
 validate_ready_bag "$BAG_DIR"
 EXTRACT_ALL=0
 if ((${#SELECTORS[@]} == 0)); then

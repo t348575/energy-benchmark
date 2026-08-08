@@ -1,0 +1,62 @@
+name: io-control-cgroups
+settings:
+  device: /dev/nvme1n1
+  nvme_power_states: [0]
+  max_repeat: 5
+  cpu_max_power_watts: 500
+
+bench_args:
+  - type: FioConfig
+    program: ../fio/fio
+
+sensors:
+  - sensor: Powersensor3
+    args:
+      type: Powersensor3Config
+      device: /dev/ttyACM0
+  - sensor: Rapl
+  - sensor: Sysinfo
+    args:
+      type: SysinfoConfig
+      interval: 10
+  - sensor: NetioHttp
+    args:
+      type: NetioHttpConfig
+      pdus:
+        - alias: left
+          url: http://192.168.1.78/netio.json
+          loads: [Node3L]
+        - alias: right
+          url: http://192.168.1.79/netio.json
+          loads: [Node3R]
+  - sensor: Diskstat
+
+benches:
+  - name: read
+    repeat: 1
+    bench:
+      type: Cmd
+      program: sleep
+      write_hint: false
+      args: [46]
+  # - name: read
+  #   repeat: 1
+  #   bench:
+  #     type: Fio
+  #     test_type:
+  #       type: randread
+  #     request_sizes: [4k]
+  #     io_engines: [io_uring]
+  #     io_depths: [1]
+  #     num_jobs: [1, 2, 4, 8, 16, 32, 64, 128, 256]
+  #     direct: true
+  #     time_based: true
+  #     runtime: 30s
+  #     ramp_time: 15s
+  #   plots:
+  #     - type: FioBwOverTime
+  #       variable: num_jobs
+  #       x_label: Processes
+  #     - type: FioBasic
+  #       variables: [num_jobs]
+  #       x_label: Processes
