@@ -21,6 +21,7 @@ def set_font(size):
     plt.rc('legend', fontsize=label_font_size)
 
     plt.rcParams['text.usetex'] = False
+    plt.rcParams['figure.figsize'] = (8.5, 6.5)
 
 def set_standard_font():
     set_font(21)
