@@ -31,6 +31,7 @@ pub struct Ycsb {
     pub db: String,
     pub fs: Filesystem,
     pub skip_format: Option<bool>,
+    pub skip_run: Option<bool>,
     pub threads: Option<u32>,
     #[cfg(feature = "prefill")]
     pub prefill: Option<String>,
@@ -139,18 +140,18 @@ impl Bench for Ycsb {
         let mut run = args.clone();
         run.push("run".to_owned());
         run.extend(continued_args.clone());
-        let cmds = vec![
-            Cmd {
-                args: load,
-                idx: 0,
-                bench_obj: Box::new(load_obj),
-            },
-            Cmd {
+        let mut cmds = vec![Cmd {
+            args: load,
+            idx: 0,
+            bench_obj: Box::new(load_obj),
+        }];
+        if !self.skip_run.unwrap_or(false) {
+            cmds.push(Cmd {
                 args: run,
                 idx: 1,
                 bench_obj: Box::new(run_obj),
-            },
-        ];
+            });
+        }
 
         Ok(CmdsResult { program, cmds })
     }

@@ -24,6 +24,7 @@ benches:
       db: rocksdb # database to test
       fs: Ext4
       threads: 16 # optional
+      skip_run: true # optional, only perform the load phase
       prefill: 200GB # optional prefill file
       fs_mount_opts: # optional filesystem mount options
       vars: # optional extra options
