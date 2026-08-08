@@ -1,6 +1,4 @@
 import json
-import numpy as np
-import pandas as pd
 import matplotlib.pyplot as plt
 
 import os
@@ -36,7 +34,6 @@ def savefig(fig, filename):
         os.makedirs(dirname, exist_ok=True)
     fig.savefig(filename, bbox_inches="tight")
 
-# Color rules (based on https://personal.sron.nl/~pault/)
 GREEN = "#117733"
 TEAL  = "#44AA99"
 CYAN = "#88CCEE"
@@ -48,46 +45,46 @@ MAGENTA = "#AA4499"
 GREY = GRAY = "#DDDDDD"
 
 vs={}
-vs['wd']={}; vs['wdrate']={}
-vs['sam']={}; vs['samrate']={}
-vs['sol']={}; vs['solrate']={}
-vs['crucial']={}; vs['crucialrate']={}
+vs['ssd_c']={}; vs['ssd_c_rate']={}
+vs['ssd_d']={}; vs['ssd_d_rate']={}
+vs['ssd_e']={}; vs['ssd_e_rate']={}
+vs['ssd_b']={}; vs['ssd_b_rate']={}
 
-qd_wd="qd-2025-11-06_14-48-52"
-qd_samsung="qd-2025-11-13_03-53-55"
-qd_solidigm="qd-2025-11-16_20-06-30"
-qd_crucial="qd-2025-12-02_02-42-57"
+qd_ssd_c="qd-2025-11-06_14-48-52"
+qd_ssd_d="qd-2025-11-13_03-53-55"
+qd_ssd_e="qd-2025-11-16_20-06-30"
+qd_ssd_b="qd-2025-12-02_02-42-57"
 
-rq_wd="request-size-2025-11-06_16-17-20"
-rq_samsung="request-size-2025-11-12_09-32-33"
-rq_solidigm="request-size-2025-11-16_20-36-10"
-rq_crucial="request-size-2025-12-02_03-26-10"
+rq_ssd_c="request-size-2025-11-06_16-17-20"
+rq_ssd_d="request-size-2025-11-12_09-32-33"
+rq_ssd_e="request-size-2025-11-16_20-36-10"
+rq_ssd_b="request-size-2025-12-02_03-26-10"
 
-a_wd="access-patterns-2025-11-01_19-25-55"
-a_samsung="access-patterns-2025-11-09_19-42-23"
-a_solidigm="access-patterns-2025-11-18_00-31-53"
-a_crucial="access-patterns-2025-11-18_00-31-53"
+a_ssd_c="access-patterns-2025-11-01_19-25-55"
+a_ssd_d="access-patterns-2025-11-09_19-42-23"
+a_ssd_e="access-patterns-2025-11-18_00-31-53"
+a_ssd_b="access-patterns-2025-11-18_00-31-53"
 
-qd_rate_wd="qd-rate-limited-2025-11-06_15-57-05"
-qd_rate_samsung="qd-rate-limited-2025-11-10_16-03-45"
-qd_rate_solidigm="qd-req-size-rate-limited-2025-11-24_12-57-43"
+qd_rate_ssd_c="qd-rate-limited-2025-11-06_15-57-05"
+qd_rate_ssd_d="qd-rate-limited-2025-11-10_16-03-45"
+qd_rate_ssd_e="qd-req-size-rate-limited-2025-11-24_12-57-43"
 
-pst_wd="nvme-pst-eff-2025-11-16_18-44-20"; wd_psts=2
-#pst_samsung="nvme-pst-eff-2025-11-18_05-43-14"
-pst_solidigm="nvme-pst-eff-2025-11-18_12-32-49"; sol_psts=2
-pst_crucial="nvme-pst-eff-2025-12-02_00-57-09"; crucial_psts=3
+pst_ssd_c="nvme-pst-eff-2025-11-16_18-44-20"; ssd_c_psts=2
+#pst_ssd_d="nvme-pst-eff-2025-11-18_05-43-14"
+pst_ssd_e="nvme-pst-eff-2025-11-18_12-32-49"; ssd_e_psts=2
+pst_ssd_b="nvme-pst-eff-2025-12-02_00-57-09"; ssd_b_psts=3
 
 psts_ran = {
-    'wd' : wd_psts,
-    'sol' : sol_psts,
-    'crucial': crucial_psts
+    'ssd_c' : ssd_c_psts,
+    'ssd_e' : ssd_e_psts,
+    'ssd_b': ssd_b_psts
 }
 
 maxtransfer = {
-    'sol': (6, '128'),
-    'sam': (10, '2048'),
-    'wd':  (9, '1024'),
-    'crucial':  (7, '256')
+    'ssd_e': (6, '128'),
+    'ssd_d': (10, '2048'),
+    'ssd_c':  (9, '1024'),
+    'ssd_b':  (7, '256')
 }
 
 generated_plot_data = set()
@@ -185,12 +182,12 @@ def trendline(arr):
     return o
 
 max_rqs = {
- 'wd': 0,
- 'sam': 0,
- 'sol': 0,
- 'solrate': 0,   
- 'crucial': 0,   
- 'crucialrate': 0   
+ 'ssd_c': 0,
+ 'ssd_d': 0,
+ 'ssd_e': 0,
+ 'ssd_e_rate': 0,   
+ 'ssd_b': 0,   
+ 'ssd_b_rate': 0   
 }
 def verify_max_rq(filename, ssd):
     o = 0
@@ -261,7 +258,7 @@ def bw_scaling_plot(lines, target, ssd, ylab, yrange, label):
     ax.tick_params(axis='both', which='major', labelsize=32)
 
     filename = f'./plots/ioshaping/bw/{target}/{ssd}-{label}.pdf'
-    if 'crucial' in filename:
+    if 'ssd_b' in filename:
         if 'ssd' in filename and '-e' in filename:
             plt.legend(fontsize=28, columnspacing=-0.1, loc=(0.25, 0.01), handletextpad=0.1)
         elif 'cpu' in filename and '-e' in filename:
@@ -272,7 +269,7 @@ def bw_scaling_plot(lines, target, ssd, ylab, yrange, label):
 
 
     print(filename)
-    if 'sol' in filename and 'absolute-p' in filename:
+    if 'ssd_e' in filename and 'absolute-p' in filename:
         print('hello',lines)
     os.makedirs(os.path.dirname(filename), exist_ok=True)
     savefig(fig, filename)
@@ -391,7 +388,7 @@ for target, suffix in [('cpu', 'only-cpu-bytes'), ('ssd', 'bytes'), ('both', '+c
 
     # QD
     for access, qappendix in [('', ''), ('seqread-', '-seq')]:
-        for label, qd in [('crucial', qd_crucial), ('wd', qd_wd), ('sam', qd_samsung), ('sol', qd_solidigm), ('wdrate', qd_rate_wd), ('samrate', qd_rate_samsung), ('solrate', qd_rate_solidigm)]:
+        for label, qd in [('ssd_b', qd_ssd_b), ('ssd_c', qd_ssd_c), ('ssd_d', qd_ssd_d), ('ssd_e', qd_ssd_e), ('ssd_c_rate', qd_rate_ssd_c), ('ssd_d_rate', qd_rate_ssd_d), ('ssd_e_rate', qd_rate_ssd_e)]:
             parame = 'rate' in label
             
             if len(access) > 1 and 'rate' in label:
@@ -428,7 +425,7 @@ for target, suffix in [('cpu', 'only-cpu-bytes'), ('ssd', 'bytes'), ('both', '+c
 
     # access pattern
     for pattern, patternsuffix in [('rw', 'rand-write'), ('sw', 'seq-write'), ('randw', 'read-write')]:
-        for label, qd in [('wd', a_wd), ('sam', a_samsung), ('sol', a_solidigm)]:
+        for label, qd in [('ssd_c', a_ssd_c), ('ssd_d', a_ssd_d), ('ssd_e', a_ssd_e)]:
             appendix = qappendix = ''
             if not 'system' in target:
                 vs[label][f'a-{pattern}-e'] = parse_efficiency([f"results/{qd}/plots/efficiency/plot_data/{patternsuffix}-{suffix}-j.json"])
@@ -456,7 +453,7 @@ for target, suffix in [('cpu', 'only-cpu-bytes'), ('ssd', 'bytes'), ('both', '+c
                 vs[label][f'a-{pattern}-e'] = [ (x*1024)/y for x,y in zip(vs[label][f'a-b{pattern}'], system)]
 
     # rate eee
-    for label, qd in [('sam', qd_samsung), ('sol', qd_solidigm)]:
+    for label, qd in [('ssd_d', qd_ssd_d), ('ssd_e', qd_ssd_e)]:
         appendix = qappendix = ''
         if not 'system' in target:
             vs[label][f'rqd-e{qappendix}'] = parse_efficiency([f"results/{qd}/plots/efficiency/plot_data/read-limited-{suffix}-j.json"])
@@ -483,7 +480,7 @@ for target, suffix in [('cpu', 'only-cpu-bytes'), ('ssd', 'bytes'), ('both', '+c
             #print(system, vs[label]['qd-b'])
             vs[label][f'rqd-e{qappendix}'] = [ (x*1024)/y for x,y in zip(vs[label][f'rqd-b{qappendix}'], system)]
 
-    for label, qd in [('sam', rq_samsung), ('sol', rq_solidigm)]:
+    for label, qd in [('ssd_d', rq_ssd_d), ('ssd_e', rq_ssd_e)]:
         appendix = qappendix = ''
         if not 'system' in target:
             vs[label][f'rrq-e{qappendix}'] = parse_efficiency([f"results/{qd}/plots/efficiency/plot_data/read-limited-{suffix}-j.json"])
@@ -512,9 +509,9 @@ for target, suffix in [('cpu', 'only-cpu-bytes'), ('ssd', 'bytes'), ('both', '+c
 
     # threads
     for policy, tappendix in [("singlecore", "singlecore"), ("round-robin", "round-robin"), ("randread-threads", ""), ("seqread-threads", "seqread-threads")]:
-        for label, qd in [('crucial', qd_crucial), ('wd', qd_wd), ('sam', qd_samsung), ('sol', qd_solidigm), ('wdrate', qd_rate_wd), ('samrate', qd_rate_samsung), ('solrate', qd_rate_solidigm)]:
+        for label, qd in [('ssd_b', qd_ssd_b), ('ssd_c', qd_ssd_c), ('ssd_d', qd_ssd_d), ('ssd_e', qd_ssd_e), ('ssd_c_rate', qd_rate_ssd_c), ('ssd_d_rate', qd_rate_ssd_d), ('ssd_e_rate', qd_rate_ssd_e)]:
             parame = 'rate' in label
-            if policy != "randread-threads" and label != 'wd':
+            if policy != "randread-threads" and label != 'ssd_c':
                 continue
 
             # WHYYYYY do you name dirs differently
@@ -552,7 +549,7 @@ for target, suffix in [('cpu', 'only-cpu-bytes'), ('ssd', 'bytes'), ('both', '+c
 
     # RQ
     for access, rqappendix in [('read', ''), ('seqread', '-seq'), ('rq', '')]:
-        for label, qd in [('crucial', rq_crucial), ('wd', rq_wd), ('sam', rq_samsung), ('sol', rq_solidigm), ('solrate', qd_rate_solidigm)]:
+        for label, qd in [('ssd_b', rq_ssd_b), ('ssd_c', rq_ssd_c), ('ssd_d', rq_ssd_d), ('ssd_e', rq_ssd_e), ('ssd_e_rate', qd_rate_ssd_e)]:
             parame = 'rate' in label
             if (parame and not 'rq' in access) or (not parame and 'rq' in access):
                 continue
@@ -589,21 +586,21 @@ for target, suffix in [('cpu', 'only-cpu-bytes'), ('ssd', 'bytes'), ('both', '+c
               
         # DVFS 
         for label, qds in [\
-                ('sol', \
+                ('ssd_e', \
                     ['dvfs-1ghz-2025-11-16_10-59-27', \
                      'dvfs-1.44ghz-2025-11-16_11-56-59', \
                      'dvfs-1.88ghz-2025-11-16_12-25-51', \
                      'dvfs-2.32ghz-2025-11-16_12-54-36', \
                      'dvfs-2.76ghz-2025-11-16_13-23-16', \
                      'dvfs-3.2ghz-2025-11-16_11-28-29']),\
-                ('crucial', \
+                ('ssd_b', \
                     ['dvfs-1ghz-2025-12-01_22-02-14', \
                      'dvfs-1.44ghz-2025-12-01_21-20-54', \
                      'dvfs-1.88ghz-2025-12-01_20-39-44', \
                      'dvfs-2.32ghz-2025-12-01_19-58-41', \
                      'dvfs-2.76ghz-2025-12-01_19-17-49', \
                      'dvfs-3.2ghz-2025-12-01_18-36-58']),\
-                ('sam', \
+                ('ssd_d', \
                     ['dvfs-1ghz-2025-11-13_00-32-26', \
                      'dvfs-1.44ghz-2025-11-13_01-15-38', \
                      'dvfs-1.88ghz-2025-11-13_01-44-19', \
@@ -642,14 +639,14 @@ for target, suffix in [('cpu', 'only-cpu-bytes'), ('ssd', 'bytes'), ('both', '+c
         # DVFS engine 
         """
         for label, qds in [\
-                ('crucial', \
+                ('ssd_b', \
                     ['dvfs-1ghz-2025-12-01_22-02-14', \
                      'dvfs-1.44ghz-fio-engines-2025-12-02_16-46-17', \
                      'dvfs-1.88ghz-fio-engines-2025-12-02_16-27-02', \
                      'dvfs-2.32ghz-fio-engines-2025-12-02_16-07-48', \
                      'dvfs-2.76ghz-fio-engines-2025-12-02_15-48-40', \
                      'dvfs-3.2ghz-fio-engines-2025-12-02_15-29-23']),\
-                ('sam', \
+                ('ssd_d', \
                     ['dvfs-1ghz-2025-12-05_15-40-36', \
                      'dvfs-1.44ghz-2025-12-05_15-21-12', \
                      'dvfs-1.88ghz-2025-12-05_15-02-01', \
@@ -690,7 +687,7 @@ for target, suffix in [('cpu', 'only-cpu-bytes'), ('ssd', 'bytes'), ('both', '+c
         """
 
         for label, qds in [\
-                ('crucial', ['dvfs-1ghz-spdk-2025-12-02_15-22-31', 'dvfs-1.44ghz-spdk-2025-12-02_15-18-57', 'dvfs-1.88ghz-spdk-2025-12-02_15-15-26', 'dvfs-2.32ghz-spdk-2025-12-02_15-11-57', 'dvfs-2.76ghz-spdk-2025-12-02_15-08-31', 'dvfs-3.2ghz-spdk-2025-12-02_14-59-40'])\
+                ('ssd_b', ['dvfs-1ghz-spdk-2025-12-02_15-22-31', 'dvfs-1.44ghz-spdk-2025-12-02_15-18-57', 'dvfs-1.88ghz-spdk-2025-12-02_15-15-26', 'dvfs-2.32ghz-spdk-2025-12-02_15-11-57', 'dvfs-2.76ghz-spdk-2025-12-02_15-08-31', 'dvfs-3.2ghz-spdk-2025-12-02_14-59-40'])\
             ]:
             if 'spdkhz' not in vs[label]:
                 vs[label]['spdkhz'] = {}
@@ -727,12 +724,12 @@ for target, suffix in [('cpu', 'only-cpu-bytes'), ('ssd', 'bytes'), ('both', '+c
 
         # engine
         for label, qd, wl in [\
-            ('sol', 'io-engine-threads-2025-11-16_16-49-23', 't'),\
-            ('sol', 'io-engine-iodepth-2025-11-16_13-59-14', 'qd'),\
-            ('sam', 'io-engine-iodepth-2025-11-12_18-25-25', 'qd'),\
-            ('sam', 'io-engine-threads-2025-11-12_07-21-54', 't'),\
-            ('crucial', 'io-engine-iodepth-2025-12-02_04-23-52', 'qd'),\
-            ('crucial', 'io-engine-threads-2025-12-02_06-16-26', 't')\
+            ('ssd_e', 'io-engine-threads-2025-11-16_16-49-23', 't'),\
+            ('ssd_e', 'io-engine-iodepth-2025-11-16_13-59-14', 'qd'),\
+            ('ssd_d', 'io-engine-iodepth-2025-11-12_18-25-25', 'qd'),\
+            ('ssd_d', 'io-engine-threads-2025-11-12_07-21-54', 't'),\
+            ('ssd_b', 'io-engine-iodepth-2025-12-02_04-23-52', 'qd'),\
+            ('ssd_b', 'io-engine-threads-2025-12-02_06-16-26', 't')\
             ]:
             for ei, engine in enumerate(['sync', 'posixaio', 'libaio', 'io_uring']):
                 if engine not in vs[label]:
@@ -746,7 +743,7 @@ for target, suffix in [('cpu', 'only-cpu-bytes'), ('ssd', 'bytes'), ('both', '+c
                     #print(engine, size, index, wl)
 
                     greplabel = f"{engine} {size}"
-                    if 'sam' in label:
+                    if 'ssd_d' in label:
                         #greplabel = f"{engine}"
                         if 't' in wl and si:
                             continue
@@ -767,18 +764,18 @@ for target, suffix in [('cpu', 'only-cpu-bytes'), ('ssd', 'bytes'), ('both', '+c
                         p = parse_bars_inner([f"results/{qd}/plots/power/plot_data/read-{2**i}-system.bar.json" for i in range(0,9)], label_to_grep=greplabel)
                     vs[label][engine][size][f'{wl}-p-{target}'] = p
                     vs[label][engine][size][f'{wl}-e'] = [ (x*1024)/y for x,y in zip(b, p)]
-        print(vs['sam'][engine].keys())
-        print(vs['sam'][engine]['4k'].keys())
-        print(vs['sam']['sync']['16k'])
-        print(vs['sam'][engine]['64k'].keys())
-        print(vs['sam'][engine]['1m'].keys())
+        print(vs['ssd_d'][engine].keys())
+        print(vs['ssd_d'][engine]['4k'].keys())
+        print(vs['ssd_d']['sync']['16k'])
+        print(vs['ssd_d'][engine]['64k'].keys())
+        print(vs['ssd_d'][engine]['1m'].keys())
         #exit()
 
         for label, qd, wl in [\
-            ('sol', 'io-engine-iouring-iodepth-2025-11-16_15-52-10', 'qd'), \
-            ('sam', 'io-engine-iouring-iodepth-2025-11-12_20-30-44', 'qd'), \
-            ('sam', 'io-engine-iouring-threads-2025-11-12_08-49-13', 't'),\
-            ('crucial', 'io-engine-iouring-iodepth-2025-12-02_00-00-45', 'qd') \
+            ('ssd_e', 'io-engine-iouring-iodepth-2025-11-16_15-52-10', 'qd'), \
+            ('ssd_d', 'io-engine-iouring-iodepth-2025-11-12_20-30-44', 'qd'), \
+            ('ssd_d', 'io-engine-iouring-threads-2025-11-12_08-49-13', 't'),\
+            ('ssd_b', 'io-engine-iouring-iodepth-2025-12-02_00-00-45', 'qd') \
             ]:
             for ei, engine in enumerate(['Polling', 'KernelPolling']):
                 if engine not in vs[label]:
@@ -792,7 +789,7 @@ for target, suffix in [('cpu', 'only-cpu-bytes'), ('ssd', 'bytes'), ('both', '+c
                     print(engine, size, index, wl)
                     # even crazier stuff. I do not get why you just remove benchmarks for no reason
                     greplabel = f"{engine} {size}"
-                    if label == 'sam':
+                    if label == 'ssd_d':
                         #greplabel = f"{engine}"
                         if si > 0 and 't' in wl:
                             continue
@@ -816,9 +813,9 @@ for target, suffix in [('cpu', 'only-cpu-bytes'), ('ssd', 'bytes'), ('both', '+c
                     vs[label][engine][size][f'{wl}-e'] = [ (x*1024)/y for x,y in zip(b, p)]
 
         for label, qd, wl in [\
-                ('sam', 'spdk-2025-11-13_09-32-00', 'qd'),\
-                ('sol', 'spdk-2025-11-16_21-00-56', 'qd'),\
-                ('crucial', 'spdk-2025-12-02_03-50-30', 'qd')\
+                ('ssd_d', 'spdk-2025-11-13_09-32-00', 'qd'),\
+                ('ssd_e', 'spdk-2025-11-16_21-00-56', 'qd'),\
+                ('ssd_b', 'spdk-2025-12-02_03-50-30', 'qd')\
             ]:
             for ei, engine in enumerate(['SPDK']):
                 if engine not in vs[label]:
@@ -831,7 +828,7 @@ for target, suffix in [('cpu', 'only-cpu-bytes'), ('ssd', 'bytes'), ('both', '+c
                     print(engine, size, index, wl)
                     # even crazier stuff. I do not get why you just remove benchmarks for no reason
                     greplabel = f"{size}"
-                    if label == 'sam':
+                    if label == 'ssd_d':
                         #greplabel = "spdk"
                         if si > 0 and 't' in wl:
                             continue
@@ -854,7 +851,7 @@ for target, suffix in [('cpu', 'only-cpu-bytes'), ('ssd', 'bytes'), ('both', '+c
                     vs[label][engine][size][f'{wl}-p-{target}'] = p
                     vs[label][engine][size][f'{wl}-e'] = [ (x*1024)/y for x,y in zip(b, p)]
 
-        for label, qd, psts in [('wd', pst_wd, wd_psts), ('sol', pst_solidigm, sol_psts), ('crucial', pst_crucial, crucial_psts)]:
+        for label, qd, psts in [('ssd_c', pst_ssd_c, ssd_c_psts), ('ssd_e', pst_ssd_e, ssd_e_psts), ('ssd_b', pst_ssd_b, ssd_b_psts)]:
             for ps in [f'ps{i}' for i in range(0,psts)]:
                 vs[label][ps] = {}
                 for access in ['rq', 'qd']:
@@ -886,9 +883,9 @@ for target, suffix in [('cpu', 'only-cpu-bytes'), ('ssd', 'bytes'), ('both', '+c
                         vs[label][ps][f'{access}-e'] = [ (x*1024)/y for x,y in zip(vs[label][ps][f'{access}-b'], system)]
 
     for appendix in ['', '-seq']:
-        #for ssd in ['sam', 'wd', 'sol', 'wdrate', 'samrate', 'solrate']:
-        #for ssd in ['crucial', 'sam', 'sol']:
-        for ssd in ['sam', 'crucial', 'sol']:
+        #for ssd in ['ssd_d', 'ssd_c', 'ssd_e', 'ssd_c_rate', 'ssd_d_rate', 'ssd_e_rate']:
+        #for ssd in ['ssd_b', 'ssd_d', 'ssd_e']:
+        for ssd in ['ssd_d', 'ssd_b', 'ssd_e']:
             for metric in [('e'), ('p-cpu'), ('p-ssd'), ('l-cpu'), ('p-both'), ('p-system')]:
             #for metric in [('p-ssd')]:
                 if 'ssd' in target and 'cpu' in metric:
@@ -917,7 +914,7 @@ for target, suffix in [('cpu', 'only-cpu-bytes'), ('ssd', 'bytes'), ('both', '+c
                         bstdev = vs[ssd][f'qd-pdev-ssd{appendix}']
                     lines.append(
                         (vs[ssd][f'qd-b{appendix}'], vs[ssd][f'qd-{metric}{appendix}'], bstdev, "Queue Depth"))
-                    if (not 'rate' in ssd) or ('sol' in ssd):
+                    if (not 'rate' in ssd) or ('ssd_e' in ssd):
                         bstdev = None
                         if 'p-cpu' in metric:
                             bstdev = vs[ssd][f'rq-pdev-cpu{appendix}']
@@ -925,7 +922,7 @@ for target, suffix in [('cpu', 'only-cpu-bytes'), ('ssd', 'bytes'), ('both', '+c
                             bstdev = vs[ssd][f'rq-pdev-ssd{appendix}']
                         lines.append(
                             (vs[ssd][f'rq-b{appendix}'], vs[ssd][f'rq-{metric}{appendix}'], bstdev, "Request size"))
-                    if len(appendix) < 2 or ssd == 'wd':
+                    if len(appendix) < 2 or ssd == 'ssd_c':
                         bstdev = None
                         if 'p-cpu' in metric and not 'seq' in appendix:
                             bstdev = vs[ssd][f't-pdev-cpu{appendix}']
@@ -940,7 +937,7 @@ for target, suffix in [('cpu', 'only-cpu-bytes'), ('ssd', 'bytes'), ('both', '+c
                     bw_scaling_plot(diffify(first, lines, True), target, ssd, labilify_metric(metric), 20, f'delta-{metric}{appendix}')
                     bw_scaling_plot(diffify(first, lines, False), target, ssd, labilify_metric(metric), 10, f'deltap-{metric}{appendix}')
 
-                    if ssd == 'wd' and len(appendix) < 2:
+                    if ssd == 'ssd_c' and len(appendix) < 2:
                         lines.append(
                             (vs[ssd][f'tsinglecore-b'], vs[ssd][f't{b}-{metric}'], None, "Threads C"))
                         lines.append(
@@ -1055,14 +1052,14 @@ for target, suffix in [('cpu', 'only-cpu-bytes'), ('ssd', 'bytes'), ('both', '+c
                     t_scaling_plot(diff, target, ssd, labilify_metric(metric) + " delta", 60, f'diff-{metric}{appendix}', yerr)
                     t_scaling_plot(diffp, target, ssd, labilify_metric(metric) + " incr", 20, f'diffp-{metric}{appendix}')
                     
-                    # if ssd == 'wd':
+                    # if ssd == 'ssd_c':
                     #     plt.plot(range(1, len(vs[ssd]['tround-robin-b'])+1), vs[ssd][f'tround-robin-{metric}'], color=colors[2], linewidth=5, label=bold("Thread rr count"), marker='o', markersize=8)
                     #     plt.plot(range(1, len(vs[ssd]['tsinglecore-b'])+1), vs[ssd][f'tsinglecore-{metric}'], color=colors[3], linewidth=5, label=bold("Thread c count"), marker='o', markersize=8)
                     #     savefig(fig, f'./plots/fig/{target}/threading-fig-T-{target}-{ssd}-{metric}.pdf')
 
 
                 # RQD size plot
-                if not ('rate' in ssd) and not (ssd == "wd" or ssd == "crucial") and not (len(appendix) > 1):
+                if not ('rate' in ssd) and not (ssd == "ssd_c" or ssd == "ssd_b") and not (len(appendix) > 1):
                     fig, ax = plt.subplots()
                     colors = [ROSE, CYAN, SAND, TEAL, MAGENTA]
 
@@ -1148,7 +1145,7 @@ for target, suffix in [('cpu', 'only-cpu-bytes'), ('ssd', 'bytes'), ('both', '+c
                     plt.close(fig)                 
 
                     # access pattern
-                if not 'rate' in ssd and len(appendix) < 2 and not 'crucial' in ssd:
+                if not 'rate' in ssd and len(appendix) < 2 and not 'ssd_b' in ssd:
                     fig, ax = plt.subplots()
                     colors = [ROSE, CYAN, SAND, TEAL, MAGENTA]
 
@@ -1186,7 +1183,7 @@ for target, suffix in [('cpu', 'only-cpu-bytes'), ('ssd', 'bytes'), ('both', '+c
                     if not 'rate' in ssd and 'sync' in vs[ssd] and len(appendix) < 2:
                         for sze in ['4k', '16k', '64k', '1m']:
                             # we call it ducttape, I call it a mistake
-                            if 'sam' == ssd and 't' in wl:
+                            if 'ssd_d' == ssd and 't' in wl:
                                 continue 
                             for en in ['sync', 'posixaio', 'libaio', 'io_uring', 'Polling', 'KernelPolling', 'SPDK']: 
                                 if 'qd' in wl:
@@ -1206,7 +1203,7 @@ for target, suffix in [('cpu', 'only-cpu-bytes'), ('ssd', 'bytes'), ('both', '+c
                                     diff = [y - first for y in vs[ssd][en][sze][f't-{metric}{appendix}']] 
                                     t_scaling_plot(diff, target, ssd, labilify_metric(metric), 20, f'{metric}{appendix}-delta', arerr=yerr, diroverride=f"t/{en}/{sze}")
                             
-                            if 't' in wl and 'crucial' in ssd:
+                            if 't' in wl and 'ssd_b' in ssd:
                                 continue
 
                             fig, ax = plt.subplots()
@@ -1221,7 +1218,7 @@ for target, suffix in [('cpu', 'only-cpu-bytes'), ('ssd', 'bytes'), ('both', '+c
                                     labelen='iou + s' 
                                 elif en == 'KernelPolling':
                                     labelen='iou + c'
-                                if 'Polling' in en and 't' in wl and 'sol' in ssd:
+                                if 'Polling' in en and 't' in wl and 'ssd_e' in ssd:
                                     continue
                                 if 'SPDK' in en and 't' in wl:
                                     continue
@@ -1267,7 +1264,7 @@ for target, suffix in [('cpu', 'only-cpu-bytes'), ('ssd', 'bytes'), ('both', '+c
                                     labelen='io_uring + spoll' 
                                 elif en == 'KernelPolling':
                                     labelen='io_uring + cpoll'
-                                if 'Polling' in en and 't' in wl and 'sol' in ssd:
+                                if 'Polling' in en and 't' in wl and 'ssd_e' in ssd:
                                     continue
                                 if 'SPDK' in en and 't' in wl:
                                     continue
@@ -1322,7 +1319,7 @@ for target, suffix in [('cpu', 'only-cpu-bytes'), ('ssd', 'bytes'), ('both', '+c
                                     z = []
                                     print(engine)
                                     # TO REMOVE
-                                    if 'SPDK' in engine and 'sam' in ssd:
+                                    if 'SPDK' in engine and 'ssd_d' in ssd:
                                         continue
                                     for di, dvfs in enumerate(['1ghz', '1.44ghz', '1.88ghz', '2.32ghz', '2.76ghz', '3.2ghz', 'default']):
                                         x.append(di+0.5)
@@ -1462,7 +1459,7 @@ for target, suffix in [('cpu', 'only-cpu-bytes'), ('ssd', 'bytes'), ('both', '+c
                         # The missing link
                         if '4k' in slab:
                             plt.plot(range(1, len(vs[ssd][f'qd-b{appendix}'])+1), vs[ssd][f'qd-{metric}{appendix}'], color=colors[-1], linewidth=5, label=bold('Default'), marker='o', markersize=8)
-                        elif '1m' in slab and 'sam' in ssd:
+                        elif '1m' in slab and 'ssd_d' in ssd:
                             plt.plot(range(1, len(vs[ssd]['io_uring']['1m'][f'qd-b{appendix}'])+1), vs[ssd]['io_uring']['1m'][f'qd-{metric}{appendix}'], color=colors[-1], linewidth=5, label=bold('Default'), marker='o', markersize=8)
                                 
                         if 'e' in metric and len(metric) == 1:
@@ -1494,7 +1491,7 @@ for target, suffix in [('cpu', 'only-cpu-bytes'), ('ssd', 'bytes'), ('both', '+c
                         savefig(fig, f'./plots/fig/{target}/DVFS-QD-{slab}-fig-bw{appendix}-{target}-{ssd}-{metric}.pdf')
 
                     for l1,l2,slab in [(0, 8, '4k'), (9, 17, '1m')]:
-                        if 'sam' in ssd:
+                        if 'ssd_d' in ssd:
                             break
                         fig, ax = plt.subplots()
                         colors = ['black', ROSE, CYAN, SAND, TEAL, MAGENTA, 'gray']
