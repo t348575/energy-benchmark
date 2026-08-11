@@ -307,7 +307,7 @@ impl YcsbBasic {
                     throughput / item.ssd_power.overall.power_mean.unwrap(),
                     throughput / item.ssd_power.benchmark.power_mean.unwrap(),
                     throughput / item.ssd_power.unmount.power_mean.unwrap(),
-                    throughput / item.ssd_power.benchmark.power_mean.unwrap() + item.cpu_power.benchmark.power_mean.unwrap(),
+                    throughput / (item.ssd_power.benchmark.power_mean.unwrap() + item.cpu_power.benchmark.power_mean.unwrap()),
                 )
             })
             .collect::<Vec<_>>();
