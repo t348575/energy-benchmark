@@ -55,8 +55,5 @@ for out in ['randw-ssd_a', 'randw-ssd_d', 'rw-ssd_d', 'rw-ssd_a',     'seqw-ssd_
     ax1.set_ylim(0, 2)
     ax2.set_ylim(0, 10)
     
-    path = f'./plots/{out}.pdf'
-    fig.savefig(path, bbox_inches="tight")
-    print("see ", path)
-
-
+    path = f'./plots/{out}'
+    save_iiswc_fig(fig, path)

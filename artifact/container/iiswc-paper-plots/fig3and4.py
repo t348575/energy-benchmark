@@ -73,12 +73,7 @@ def bw_scaling_plot(lines, target, ssd, ylab, yrange, label):
             plt.legend(fontsize=28, columnspacing=-0.1)
     
     plt.xlim(0, 4 if not 'PS' in filename else 1)
-   
-    os.makedirs(os.path.dirname(filename), exist_ok=True)
-    fig.savefig(filename, bbox_inches="tight")
-    set_font(21)
-    print("see ", filename)
-    plt.close(fig)
+    save_iiswc_fig(fig, filename.split('.pdf')[0])
     
     if 'delta-p-cpu' in filename:
         o.append((filename, lines[2][1][::], lines[2][-1]))
@@ -129,9 +124,8 @@ for target in ['cpu', 'ssd', 'both', 'system']:
     ax.set_ylabel(bold("Efficiency (MiB/J)"), fontsize=32)
     ax.legend(fontsize=32,title="SSD",title_fontsize=32,borderpad=0.01,labelspacing=0.1)
     ax.grid()
-    path=f'./plots/ioshaping/bw/{target}/all-ssds-scatter.png'
-    fig.savefig(path, bbox_inches="tight")
-    print("see ", path)
+    path=f'./plots/ioshaping/bw/{target}/all-ssds-scatter'
+    save_iiswc_fig(fig, path)
 
     # Plots for paper
     for appendix in ['', '-seq']:

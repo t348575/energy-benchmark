@@ -100,9 +100,8 @@ for ssd, dvfs4k, dvfs1m, ioengine4k, ioengine1m in [\
                     plt.legend()
                 plt.grid()
                 plt.ylim(0, 60)
-                path = f'./plots/xfs-dvfs-{ssd}-{sz}-{qdlab}-{dist}.pdf'
-                fig.savefig(path, bbox_inches="tight")
-                print(f"see DVFS {path}")
+                path = f'./plots/xfs-dvfs-{ssd}-{sz}-{qdlab}-{dist}'
+                save_iiswc_fig(fig, path)
 
     for dist in ['1m', '1g']:
         for sz in ['4k', '1m']:
@@ -124,6 +123,5 @@ for ssd, dvfs4k, dvfs1m, ioengine4k, ioengine1m in [\
                 plt.legend()
             plt.grid()
             plt.ylim(0, 60)
-            path = f'./plots/xfs-dvfs-{ssd}-{sz}-QDs-{dist}.pdf'
-            fig.savefig(path, bbox_inches="tight")
-            print(f"see {path}")
+            path = f'./plots/xfs-dvfs-{ssd}-{sz}-QDs-{dist}'
+            save_iiswc_fig(fig, path)

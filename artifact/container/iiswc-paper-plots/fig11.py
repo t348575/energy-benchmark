@@ -37,7 +37,5 @@ for ys, wl, ran in data:
     if (ran > 10):
         plt.legend(labels=[bold(b) for b in ['D', 'E']], ncol=2, fontsize=32)
 
-    for format in ["pdf", "png"]:
-        path = f'./plots/filebench-{wl}.{format}'
-        fig.savefig(path, bbox_inches="tight")
-        print("see ", path)
+    path = f'./plots/filebench-{wl}'
+    save_iiswc_fig(fig, path)

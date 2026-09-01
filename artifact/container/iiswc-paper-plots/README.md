@@ -25,6 +25,8 @@ While we recommend using e-bench's scripts, we include the analysis and plotting
 
 # nvme-energy-bench-paper-plots
 
+## Retrieve datasets
+
 Recover preprocessed data:
 
 ```bash
@@ -35,7 +37,7 @@ done
 popd
 ```
 
-What happened in preprocessing? (not for running):
+What happened in preprocessing? (in case data is present):
 
 ```bash
 # The following lines can not be run. The preprocess was used to generate the dataset from the dataruns (dataruns not included in repository, so it will fail) 
@@ -47,6 +49,16 @@ uv run fig5cd_preprocess.py
 stat iiswcdata/preprocessed-fig5cd*
 for json in $(ls iiswcdata/*fig5cd*.json); do zip -r $json.zip $json; done
 ```
+
+## Fig worklow
+
+The following will run all experiments in sequence. For individual experiments look at the next section.
+
+```bash
+uv run fig_workflow.py
+```
+
+## Run figs separately
 
 Fig 2 power range plots (hardcoded numbers):
 

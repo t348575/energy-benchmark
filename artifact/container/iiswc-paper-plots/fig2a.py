@@ -21,6 +21,5 @@ plt.grid()
 ax.set_xlabel(bold("SSD model"))
 ax.set_ylabel(bold("Power (W)"))
 
-path='./plots/ssd-power-range.pdf'
-fig.savefig(path, bbox_inches="tight")
-print("see ", path)
+path='./plots/ssd-power-range'
+save_iiswc_fig(fig, path)

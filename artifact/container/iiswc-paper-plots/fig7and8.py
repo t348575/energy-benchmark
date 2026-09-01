@@ -50,11 +50,8 @@ def qd_scaling_plot(ar, target, ssd, ylab, yrange, label, arerr = None, diroverr
     ax.set_xticks(range(1, len(ar)+1), ['1', '2', '4', '8', '16', '32', '64', '128', '256'][:len(ar)])
 
     di = diroverride if diroverride else 'qd'
-    filename = f'./plots/ioshaping/{di}/{target}/{ssd}-{label}.pdf'
-    os.makedirs(os.path.dirname(filename), exist_ok=True)
-    fig.savefig(filename, bbox_inches="tight")
-    print("see ", filename)
-    plt.close(fig)
+    path = f'./plots/ioshaping/{di}/{target}/{ssd}-{label}'
+    save_iiswc_fig(fig, path)
 
 def t_scaling_plot(ar, target, ssd, ylab, yrange, label, arerr = None, diroverride=None):
     fig, ax = plt.subplots()
@@ -72,11 +69,8 @@ def t_scaling_plot(ar, target, ssd, ylab, yrange, label, arerr = None, diroverri
     ax.set_xticks(range(1, len(ar)+1), ['1', '2', '4', '8', '16', '32', '64', '128', '256'][:len(ar)])
 
     di = diroverride if diroverride else 't'
-    filename = f'./plots/ioshaping/{di}/{target}/{ssd}-{label}.pdf'
-    os.makedirs(os.path.dirname(filename), exist_ok=True)
-    fig.savefig(filename, bbox_inches="tight")
-    print("see ", filename)
-    plt.close(fig)
+    path = f'./plots/ioshaping/{di}/{target}/{ssd}-{label}'
+    save_iiswc_fig(fig, path)
 
 def rq_scaling_plot(ar, target, ssd, ylab, yrange, label, arerr = None):
     for divide, metric in [(False, 'rq'), (True, 'iops')]:
@@ -107,13 +101,8 @@ def rq_scaling_plot(ar, target, ssd, ylab, yrange, label, arerr = None):
 
         plt.axvline(x=max_transfer_ssd, color='red', ls='--')
 
-        filename = f'./plots/ioshaping/{metric}/{target}/{ssd}-{label}.pdf'
-        os.makedirs(os.path.dirname(filename), exist_ok=True)
-        fig.savefig(filename, bbox_inches="tight")
-        print("see ", filename)
-        plt.close(fig)
-
-
+        path = f'./plots/ioshaping/{metric}/{target}/{ssd}-{label}'
+        save_iiswc_fig(fig, path)
 
 def labilify_metric(metric):
     if 'e' in metric and len(metric) == 1:
@@ -266,9 +255,8 @@ for target in ['cpu', 'ssd', 'both', 'system']:
                                 ax.set_xlabel(bold("CPU Frequency (GHz)"), labelpad=-30, x=0.4)
                                 plt.xticks(rotation=45)
 
-                                path=f'./plots/fig3/{target}/{filename}.pdf'
-                                fig.savefig(path, bbox_inches="tight")
-                                print("see ", path)
+                                path=f'./plots/fig3/{target}/{filename}'
+                                save_iiswc_fig(fig, path)
 
             # DVFS
                 if not 'rate' in ssd and '1ghz' in vs[ssd] and len(appendix) < 2:
@@ -314,7 +302,8 @@ for target in ['cpu', 'ssd', 'both', 'system']:
 
                         ax.set_xlabel(bold("Bandwidth (GiB/s)"))
 
-                        fig.savefig(f'./plots/fig3/{target}/DVFS-{slab}-fig3-bw{appendix}-correlation-{target}-{ssd}-{metric}.pdf', bbox_inches="tight")
+                        path = f'./plots/fig3/{target}/DVFS-{slab}-fig3-bw{appendix}-correlation-{target}-{ssd}-{metric}'
+                        save_iiswc_fig(fig, path)
                     
                         fig, ax = plt.subplots()
                         colors = ['black', ROSE, CYAN, SAND, TEAL, MAGENTA, 'gray']
@@ -361,9 +350,8 @@ for target in ['cpu', 'ssd', 'both', 'system']:
                         ax.set_xlabel(bold("Queue depth"))
                         ax.set_xticks([x + 0.5 for x in range(0, 9)], [bold(qdi) for qdi in ['1', '2', '4', '8', '16', '32', '64', '128', '256']])
 
-                        path=f'./plots/fig3/{target}/DVFS-QD-{slab}-fig3-bw{appendix}-{target}-{ssd}-{metric}.pdf'
-                        fig.savefig(path, bbox_inches="tight")
-                        print(f"see {path}")
+                        path=f'./plots/fig3/{target}/DVFS-QD-{slab}-fig3-bw{appendix}-{target}-{ssd}-{metric}'
+                        save_iiswc_fig(fig, path)
 
                     for l1,l2,slab in [(0, 8, '4k'), (9, 17, '1m')]:
                         if 'ssd_d' in ssd:
@@ -401,8 +389,8 @@ for target in ['cpu', 'ssd', 'both', 'system']:
 
                         ax.set_xlabel(bold("Bandwidth (GiB/s)"))
 
-                        fig.savefig(f'./plots/fig3/{target}/DVFST-{slab}-fig3-bw{appendix}-correlation-{target}-{ssd}-{metric}.pdf', bbox_inches="tight")
-                    
+                        path = f'./plots/fig3/{target}/DVFST-{slab}-fig3-bw{appendix}-correlation-{target}-{ssd}-{metric}'
+                        save_iiswc_fig(fig, path)
 
                         fig, ax = plt.subplots()
                         colors = ['black', ROSE, CYAN, SAND, TEAL, MAGENTA, 'gray']

@@ -1,4 +1,15 @@
 import matplotlib.pyplot as plt
+import os
+
+def save_iiswc_fig(fig, path):
+    # First create dirs if they don't exist
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    # Then save
+    for f_format in ["pdf", "png"]:
+        fig.savefig(f"{path}.{f_format}", bbox_inches="tight") 
+        print("see ", f"{path}.{f_format}")
+    # Side-effect, but we do not view live anyway
+    plt.close(fig)
 
 def set_font(size):
     text_font_size = size

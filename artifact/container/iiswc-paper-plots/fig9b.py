@@ -32,5 +32,5 @@ ax.set_xlabel(bold("SSD"))
 ax.set_ylabel(bold(" Idle Power (W)"))
 
 plt.legend(labels=[bold(b) for b in ['PS0', 'PS1', 'PS2']])
-fig.savefig(f'./plots/pst-idle-range.pdf', bbox_inches="tight")
-print("see ", f'./plots/pst-idle-range.pdf')
+path = './plots/pst-idle-range'
+save_iiswc_fig(fig, path)

@@ -28,7 +28,8 @@ for ys, ssd in [([[90.648, 90.288], [93.579, 93.817], [90.814, 90.187], [90.490,
 
     plt.legend(labels=[bold(b) for b in ['4 KiB', '1 MiB']], loc='lower left')
 
-    fig.savefig(f'./plots/rate-access-{ssd}.pdf', bbox_inches="tight")
+    path = f'./plots/rate-access-{ssd}'
+    save_iiswc_fig(fig, path)
 
 # Normal I/O access
 LABELS=['Seq Read', 'Rand Read', 'Seq Write', 'Rand Write', 'Rand Mixed']
@@ -53,7 +54,8 @@ for ys, ssd in [\
 
     ax.set_ylabel(bold('Efficiency (MiB/J)'))
 
-    fig.savefig(f'./plots/access-{ssd}.pdf', bbox_inches="tight")
+    path = f'./plots/access-{ssd}'
+    save_iiswc_fig(fig, path)
 
 # Double bar with power
 LABELS=['Seq Read', 'Rand Read', 'Seq Write', 'Rand Write', 'Rand Mixed']
@@ -96,9 +98,8 @@ for ys, ssd in ssd_list:
     ax1.legend(labels=[bold('Efficiency')], loc='upper left')
     ax2.legend(labels=[bold('Power')], loc='upper right')
 
-    fig.savefig(f'./plots/access-{ssd}-with-power.pdf', bbox_inches="tight")
-    print("see ", f'./plots/access-{ssd}-with-power.pdf')
-
+    path = f'./plots/access-{ssd}-with-power.pdf'
+    save_iiswc_fig(fig, path)
 
 fig, ax1 = plt.subplots()
 z = 0
@@ -124,7 +125,5 @@ leg.legendHandles[0].set_facecolor(colors[0])
 leg.legendHandles[1].set_facecolor(colors[1])
 plt.grid(axis='y', color='gray', linestyle='dashed', linewidth=0.5)
 
-fig.savefig(f'./plots/access-all-ssds.png', bbox_inches="tight")
-print("see ", f'./plots/access-all-ssds.png')
-
-
+path = f'./plots/access-all-ssds'
+save_iiswc_fig(fig, path)
