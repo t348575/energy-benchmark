@@ -17,27 +17,47 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-PAPER_PLOT_SCRIPT = Path("/opt/paper-plots/fig.py")
+PAPER_PLOTS_DIR = Path("/opt/paper-plots")
+RUN_DISCOVERY_SCRIPTS = ("preprocess-data.py", "fig5cd_preprocess.py")
 ENERGY_BENCH = Path("/usr/local/bin/nvme-energy-bench")
 ENERGY_BENCH_PLOTS = Path("/opt/nvme-energy-bench/plots")
 RUN_NAME = re.compile(
-    r"^[A-Za-z0-9][A-Za-z0-9_.-]*-20\d{2}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$"
+    r"[A-Za-z0-9][A-Za-z0-9_.-]*-20\d{2}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}"
 )
 
 
-def paper_run_directories(script: Path = PAPER_PLOT_SCRIPT) -> list[str]:
-    """Return experiment directory literals used by the pinned paper script."""
-    tree = ast.parse(script.read_text(encoding="utf-8"), filename=str(script))
-    runs = {
-        node.value
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Constant)
-        and isinstance(node.value, str)
-        and RUN_NAME.fullmatch(node.value)
-    }
+def paper_run_directories(paper_plots_dir: Path = PAPER_PLOTS_DIR) -> list[str]:
+    runs: set[str] = set()
+    for name in RUN_DISCOVERY_SCRIPTS:
+        script = paper_plots_dir / name
+        tree = ast.parse(script.read_text(encoding="utf-8"), filename=str(script))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                runs.update(RUN_NAME.findall(node.value))
     if not runs:
-        raise ValueError(f"no experiment directories found in {script}")
+        raise ValueError(
+            f"no experiment directories found in {', '.join(RUN_DISCOVERY_SCRIPTS)}"
+        )
     return sorted(runs)
+
+
+def figure_scripts(paper_plots_dir: Path = PAPER_PLOTS_DIR) -> list[str]:
+    workflow = paper_plots_dir / "fig_workflow.py"
+    tree = ast.parse(workflow.read_text(encoding="utf-8"), filename=str(workflow))
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and node.targets[0].id == "EXPERIMENTS"
+            and isinstance(node.value, ast.List)
+        ):
+            return [
+                f"{element.value}.py"
+                for element in node.value.elts
+                if isinstance(element, ast.Constant) and isinstance(element.value, str)
+            ]
+    raise ValueError(f"no EXPERIMENTS list found in {workflow}")
 
 
 def run_checked(
@@ -90,7 +110,7 @@ def find_results_root(dataset: Path, requested: str | None, runs: list[str]) -> 
         preview = ", ".join(missing[:10])
         remainder = f" (and {len(missing) - 10} more)" if len(missing) > 10 else ""
         raise ValueError(
-            f"{existing} is missing {len(missing)} fig.py experiment directories: "
+            f"{existing} is missing {len(missing)} paper-plot experiment directories: "
             f"{preview}{remainder}"
         )
     raise ValueError(
@@ -167,6 +187,7 @@ def reproduce(
     work_results.mkdir(parents=True)
     tool_work.mkdir(parents=True)
     generated.mkdir(parents=True)
+    (workspace / "iiswcdata").mkdir(parents=True)
     prepare_paper_output_directories(figures)
     shutil.copytree(ENERGY_BENCH_PLOTS, tool_work / "plots")
     (workspace / "plots").symlink_to(figures, target_is_directory=True)
@@ -195,13 +216,23 @@ def reproduce(
             )
             statuses.append({"experiment": run, "status": "PASS"})
 
-    print("Generating paper figures with fig.py", flush=True)
-    run_checked(
-        [sys.executable, str(PAPER_PLOT_SCRIPT)],
-        workspace,
-        logs / "paper-fig.log",
-        "paper figure generation",
-    )
+    paper_plot_scripts = [
+        "preprocess-data.py",
+        "fig5cd_preprocess.py",
+        *figure_scripts(),
+        "fig_sweep.py",
+    ]
+    for script in paper_plot_scripts:
+        print(f"Generating paper figures: {script}", flush=True)
+        command = [sys.executable, str(PAPER_PLOTS_DIR / script)]
+        if script in ("preprocess-data.py", "fig5cd_preprocess.py"):
+            command += ["--in-dir", "results"]
+        run_checked(
+            command,
+            workspace,
+            logs / "paper-fig" / f"{script}.log",
+            f"paper figure generation ({script})",
+        )
 
     if not skip_nvme_energy_bench:
         for run in runs:
@@ -217,7 +248,7 @@ def reproduce(
 
     paper_pdfs = sorted(figures.rglob("*.pdf"))
     if not paper_pdfs:
-        raise RuntimeError("fig.py completed but generated no PDF figures")
+        raise RuntimeError("paper-plot generation completed but produced no PDF figures")
 
     metadata = {
         "completed_utc": datetime.now(timezone.utc).isoformat(),

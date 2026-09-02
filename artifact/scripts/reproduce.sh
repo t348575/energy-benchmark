@@ -60,7 +60,7 @@ Options:
                          dataset instead of running nvme-energy-bench
 
 The full replay runs nvme-energy-bench plot for every experiment directory
-referenced by fig.py, then runs fig.py to generate paper figures.
+referenced by the paper plot pipeline, then runs it to generate paper figures.
 The dataset is mounted read-only. Generated files are written only to output.
 EOF
 }

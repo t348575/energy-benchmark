@@ -47,7 +47,7 @@ RUN python -m pip install --no-cache-dir --requirement /opt/ae/requirements.txt
 
 COPY --from=builder /src/target/release/nvme-energy-bench /usr/local/bin/nvme-energy-bench
 COPY --from=builder /src/plots/ /opt/nvme-energy-bench/plots/
-COPY artifact/container/fig.py /opt/paper-plots/fig.py
+COPY artifact/container/iiswc-paper-plots/ /opt/paper-plots/
 
 COPY artifact/container/replay.py /opt/ae/
 

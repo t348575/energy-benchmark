@@ -1,9 +1,13 @@
-# nvme-energy-bench ![Visits](https://lambda.348575.xyz/repo-view-counter?repo=nvme-energy-bench)
+# nvme-energy-bench ![Visits](https://lambda.348575.xyz/repo-view-counter?repo=nvme-energy-bench) [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21886833.svg)](https://doi.org/10.5281/zenodo.21886833)
 A tool to automate NVMe SSD energy-performance benchmarks.
+
+## iiswc-2026
+For the IISWC-2026 artifact evaluation, consult [artifact/README.md](artifact/README.md)
 
 ## Setup
 1. Clone this repository.
 2. Configure [setup.toml](setup.toml) with the benchmarks, sensors and plotters you require (just the name)
+For specific configuration options for each benchmark, sensor or plotter, check respective README in [benches](benches), [sensors](sensors).
 #### Example:
 ```toml
 benches = ["fio", "ycsb"]
@@ -16,12 +20,13 @@ features = ["prefill"] # activate a cargo feature for this benchmark
 3. Ensure all dependencies required for the benchmark runners, sensors & plotters are installed (check respective directories for README)
 4. Run `cargo build` (populates dependencies from setup.toml)
 5. Run `cargo build --release -p nvme-energy-bench` (built executable in `target/release/`)
-6. Ensure `python3` is installed if you are generating any plots, preferably create a virtual env as well.
-7. Setup a `config.yaml` benchmark configuration file as shown below, then run using: `sudo target/release/nvme-energy-bench bench`
+6. Ensure `python3` is installed if you are generating any plots, preferably create and activate a virtual env.
+7. Install the python dependencies `numpy`, `matplotlib`, `pandas`, `seaborn`, `scipy`, `pyyaml`.
+8. Setup a `config.yaml` benchmark configuration file as shown below, then run using: `sudo target/release/nvme-energy-bench bench`
 
-**Note 1**: Always run the benchmark using sudo, and from the repository root.
+Always run the benchmark using sudo, and from the repository root.
 
-**Note 2**: Set the `RUST_LOG` environment variable to emit logs (debug, info, warn, error)
+Set the `RUST_LOG` environment variable to emit logs (debug, info, warn, error)
 
 ## Benchmark config
 For specific configuration options for each benchmark, sensor or plotter, check respective README.
