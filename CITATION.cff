@@ -1,0 +1,29 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+preferred-citation:
+  type: conference-paper
+  authors:
+  - family-names: "Kanichai"
+    given-names: "Joseph"
+    orcid: "https://orcid.org/0009-0005-7960-7538"
+  - family-names: "Doekemeijer"
+    given-names: "Krijn"
+    orcid: "https://orcid.org/0009-0007-7530-4438"
+  - family-names: "van der Vlugt"
+    given-names: "Steven"
+    orcid: "https://orcid.org/0000-0001-6834-4860"
+  - family-names: "Niewenhuis"
+    given-names: "Dante"
+    orcid: "https://orcid.org/0000-0002-9114-1364"
+  - family-names: "De Matteis"
+    given-names: "Tiziano"
+    orcid: "https://orcid.org/0000-0002-9158-6849"
+  - family-names: "Trivedi"
+    given-names: "Animesh"
+    orcid: "https://orcid.org/0000-0003-3586-7168"
+  title: "ZWAL: Rethinking Write-ahead Logs for ZNS SSDs"
+  version: 1.0.0
+  conference:
+      name: "2026 IEEE International Symposium on Workload Characterization (IISWC)"
+  year: 2026
+  month: "October"
