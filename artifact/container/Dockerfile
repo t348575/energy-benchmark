@@ -42,7 +42,7 @@ RUN apt-get update \
         libstdc++6 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY artifact/container/requirements.txt /opt/ae/requirements.txt
+COPY artifact/container/iiswc-paper-plots/requirements.txt /opt/ae/requirements.txt
 RUN python -m pip install --no-cache-dir --requirement /opt/ae/requirements.txt
 
 COPY --from=builder /src/target/release/nvme-energy-bench /usr/local/bin/nvme-energy-bench
