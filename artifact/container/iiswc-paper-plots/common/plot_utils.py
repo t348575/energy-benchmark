@@ -1,5 +1,6 @@
 import matplotlib.pyplot as plt
 import os
+import shutil
 
 def save_iiswc_fig(fig, path):
     # First create dirs if they don't exist
@@ -25,8 +26,11 @@ def set_font(size):
     plt.rc('ytick', labelsize=label_font_size)    
     plt.rc('legend', fontsize=label_font_size)  
 
-    plt.rcParams['text.usetex'] = True    
-    plt.rcParams['text.latex.preamble'] = r'\boldmath'
+    if shutil.which('latex'):
+        plt.rcParams['text.usetex'] = True    
+        plt.rcParams['text.latex.preamble'] = r'\boldmath'
+    else:
+        plt.rcParams['text.usetex'] = False   
 
 def set_standard_font():
     set_font(21)
