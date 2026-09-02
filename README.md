@@ -2,7 +2,7 @@
 A tool to automate NVMe SSD energy-performance benchmarks.
 
 ## iiswc-2026
-For the IISWC-2026 artifact evaluation, consult [artifact/README.md](artifact/README.md)
+For the IISWC-2026 artifact, consult [artifact/README.md](artifact/README.md). Artifact dataset: [https://doi.org/10.5281/zenodo.21848710](https://doi.org/10.5281/zenodo.21848710)
 
 ## Setup
 1. Clone this repository.

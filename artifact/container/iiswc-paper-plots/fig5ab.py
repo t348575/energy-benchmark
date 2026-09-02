@@ -121,8 +121,8 @@ for ys, ssd in ssd_list:
 ax1.set_ylabel(bold('Efficiency (MiB/J)'))
 ax1.legend(labels=[bold('SSD A'), bold('SSD D')], loc='upper left')
 leg = ax1.get_legend()
-leg.legendHandles[0].set_facecolor(colors[0])
-leg.legendHandles[1].set_facecolor(colors[1])
+leg.legend_handles[0].set_facecolor(colors[0])
+leg.legend_handles[1].set_facecolor(colors[1])
 plt.grid(axis='y', color='gray', linestyle='dashed', linewidth=0.5)
 
 path = f'./plots/access-all-ssds'

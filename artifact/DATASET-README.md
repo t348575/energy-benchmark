@@ -15,7 +15,7 @@ The experiment directories are suffixed by their run date. This can be used to i
 | 25 November 2025 at 10:20:27 through 5 December 2025 at 11:44:53 | B |
 | 8 October 2025 at 14:31:15 through 7 November 2025 at 11:51:15 | C |
 | 7 November 2025 at 13:26:38 through 14 November 2025 at 10:37:01 | D |
-| 5 December 2025 at 12:24:56 through 10 December 2025 at 17:45:38 | D |
+| Anything after 5 December 2025 at 12:24:56 | D |
 | 14 November 2025 at 11:44:36 through 25 November 2025 at 07:30:56 | E |
 
 ## Distribution and integrity

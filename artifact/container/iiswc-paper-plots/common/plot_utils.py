@@ -36,6 +36,8 @@ def set_standard_font():
     set_font(21)
 
 def bold(text):
+    if not plt.rcParams.get('text.usetex'):
+        return text
     return r'\textbf{' + text + r'}'
 
 # Color rules (based on https://personal.sron.nl/~pault/)

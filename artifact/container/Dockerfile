@@ -40,6 +40,12 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
         libstdc++6 \
+        cm-super \
+        dvipng \
+        ghostscript \
+        texlive-fonts-recommended \
+        texlive-latex-base \
+        texlive-latex-extra \
     && rm -rf /var/lib/apt/lists/*
 
 COPY artifact/container/iiswc-paper-plots/requirements.txt /opt/ae/requirements.txt
