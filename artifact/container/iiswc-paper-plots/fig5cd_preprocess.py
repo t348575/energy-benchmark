@@ -1,13 +1,22 @@
 import numpy as np
 import json
+import argparse
+import os
+
+parser = argparse.ArgumentParser()
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+parser.add_argument('--in-dir', nargs='?', const=f"{BASE_DIR}/results",
+    default=f"{BASE_DIR}/results", type=str)
+args = parser.parse_args()
+in_dir = args.in_dir
 
 for out, dirp in [\
-        ('randw-ssd_a', 'iiswcdata/randw-ssda'),\
-        ('randw-ssd_d', 'iiswcdata/randw-ssdd'),\
-        ('rw-ssd_d', 'iiswcdata/seqw-ssdd'),\
-        ('rw-ssd_a', 'iiswcdata/rw-ssda'),\
-        ('seqw-ssd_d', 'iiswcdata/seqw-ssdd'),\
-        ('seqw-ssd_a', 'iiswcdata/seqw-ssda')\
+        ('randw-ssd_a', f'{in_dir}/access-patterns-randwrite-2025-12-04_21-53-48/data/rand-write-ps0-i0-0'),\
+        ('randw-ssd_d', f'{in_dir}/access-patterns-randwrite-2025-12-06_00-00-05/data/rand-write-limited-ps0-i0-0/'),\
+        ('rw-ssd_d', f'{in_dir}/access-patterns-readwrite-2025-12-06_01-29-26/data/read-write-limited-ps0-i0-0'),\
+        ('rw-ssd_a', f'{in_dir}/access-patterns-readwrite-2025-12-05_05-29-01/data/read-write-ps0-i0-0/'),\
+        ('seqw-ssd_d', f'{in_dir}/access-patterns-seqwrite-2025-12-07_00-21-10/data/seq-write-ps0-i0-0'),\
+        ('seqw-ssd_a', f'{in_dir}/access-patterns-seqwrite-2025-12-05_01-40-57/data/seq-write-ps0-i0-0')\
         ]:
     bw_x = []
     bw_y = []

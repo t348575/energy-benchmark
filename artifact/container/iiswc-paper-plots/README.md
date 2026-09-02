@@ -25,29 +25,13 @@ While we recommend using e-bench's scripts, we include the analysis and plotting
 
 # nvme-energy-bench-paper-plots
 
-## Retrieve datasets
+## Preprocess datasets
 
-Recover preprocessed data:
-
-```bash
-pushd iiswcdata
-for zip in $(ls preprocessed*.zip); do 
-    unzip $zip; 
-done
-popd
-```
-
-What happened in preprocessing? (in case data is present):
+We assume that all data is stored in `${pwd}/results`, but change as needed
 
 ```bash
-# The following lines can not be run. The preprocess was used to generate the dataset from the dataruns (dataruns not included in repository, so it will fail) 
-uv run preprocess-data.py
-stat iiswcdata/preprocessed-ebench-data.json
-zip -r iiswcdata/preprocessed-ebench-data.json.zip iiswcdata/preprocessed-ebench-data.json
-
-uv run fig5cd_preprocess.py
-stat iiswcdata/preprocessed-fig5cd*
-for json in $(ls iiswcdata/*fig5cd*.json); do zip -r $json.zip $json; done
+uv run preprocess-data.py --in-dir ${pwd}/results
+uv run fig5cd_preprocess.py --in-dir ${pwd}/results
 ```
 
 ## Fig worklow
